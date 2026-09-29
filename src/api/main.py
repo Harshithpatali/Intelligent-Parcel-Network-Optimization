@@ -48,5 +48,5 @@ def optimize(req:OptimizeRequest):
 def scenario(req:ScenarioRequest):
  scenarios={'demand_surge':Scenario('demand_surge','demand_surge',demand_multiplier=1.30),'hub_outage':Scenario('hub_outage','hub_outage',capacity_multiplier=.60),'combined':Scenario('combined','combined',demand_multiplier=1.30,capacity_multiplier=.70)}
  try:
-  d=demand.tail(7*len(hubs)*(len(hubs)-1)).groupby(['origin_hub','destination_hub'],as_index=False).parcel_count.sum(); flows,m=run_scenario(d,hubs,scenarios[req.scenario]); UNMET_PARCELS.set(m['unmet_demand']); OPTIMIZATION_RUNS.labels(m['status']).inc(); return {'metrics':m,'flows':flows.to_dict(orient='records')}
+  d=demand.tail(7*len(hubs)*(len(hubs)-1)).groupby(['origin_hub','destination_hub'],as_index=False).parcel_count.sum(); flows,m=run_scenario(d,hubs, __import__('src.optimization.network', fromlist=['build_cost_matrix']).build_cost_matrix(hubs), scenarios[req.scenario]); UNMET_PARCELS.set(m['unmet_demand']); OPTIMIZATION_RUNS.labels(m['status']).inc(); return {'metrics':m,'flows':flows.to_dict(orient='records')}
  except Exception: OPTIMIZATION_RUNS.labels('error').inc(); logger.exception('scenario_failed'); raise HTTPException(400,{'detail':'Scenario request failed','request_id':request_id_ctx.get()})
