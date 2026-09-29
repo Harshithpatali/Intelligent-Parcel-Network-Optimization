@@ -1,11 +1,6 @@
-"""Step 10C: constrained intervention bundle optimization.
-
-Selects combinations of targeted interventions under budget and reliability
-constraints. Candidate bundles are evaluated on identical Monte Carlo states.
-"""
+"""Step 10C: constrained intervention bundle optimization."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Sequence
@@ -31,8 +26,8 @@ class BundleConfig:
 
 
 def _q(values, q):
-    a = np.asarray(values, dtype=float)
-    return float(np.quantile(a, q)) if a.size else float("nan")
+    values = np.asarray(values, dtype=float)
+    return float(np.quantile(values, q)) if values.size else float("nan")
 
 
 def _summary(rows, target):
@@ -41,7 +36,6 @@ def _summary(rows, target):
     costs = np.asarray([r["total_transport_cost"] for r in rows], dtype=float)
     var95 = _q(costs, .95)
     tail = costs[costs >= var95]
-    cvar95 = float(tail.mean()) if tail.size else var95
     return {
         "probability_target_met": float(np.mean(service >= target)),
         "service_level_p05": _q(service, .05),
@@ -49,7 +43,7 @@ def _summary(rows, target):
         "unmet_demand_p95": _q(unmet, .95),
         "expected_unmet_demand": float(unmet.mean()),
         "transport_cost_p50": _q(costs, .50),
-        "transport_cost_cvar95": cvar95,
+        "transport_cost_cvar95": float(tail.mean()) if tail.size else var95,
     }
 
 
@@ -63,30 +57,36 @@ def _apply_bundle(scenario, hubs, interventions):
     return modified_scenario, modified_hubs
 
 
-def evaluate_bundle_candidates(
-    demand: pd.DataFrame,
-    hubs: pd.DataFrame,
-    cost_matrix: pd.DataFrame,
-    fleet: pd.DataFrame,
-    interventions: Sequence[Intervention],
-    config: BundleConfig | None = None,
-) -> pd.DataFrame:
-    """Enumerate bounded intervention bundles and evaluate them stochastically."""
+def _deduplicate_interventions(interventions):
+    by_id = {}
+    for intervention in interventions:
+        if intervention.intervention_id in by_id:
+            raise ValueError(f"Duplicate intervention_id: {intervention.intervention_id}")
+        by_id[intervention.intervention_id] = intervention
+    return list(by_id.values())
 
+
+def evaluate_bundle_candidates(demand, hubs, cost_matrix, fleet,
+                               interventions: Sequence[Intervention],
+                               config: BundleConfig | None = None) -> pd.DataFrame:
     config = config or BundleConfig()
+    if config.budget < 0 or config.max_bundle_size < 0 or config.n_simulations < 1:
+        raise ValueError("Invalid bundle configuration.")
+    interventions = _deduplicate_interventions(interventions)
+
     sim_cfg = SimulationConfig(
         n_simulations=config.n_simulations,
         seed=config.seed,
-        service_target=config.service_target,
+        service_level_target=config.service_target,
     )
     rng = np.random.default_rng(config.seed)
     scenarios = [
-        generate_random_scenario(rng, demand, hubs, cost_matrix, sim_cfg)
-        for _ in range(config.n_simulations)
+        generate_random_scenario(hubs, cost_matrix, rng, i, sim_cfg)
+        for i in range(config.n_simulations)
     ]
 
     bundles = [()]
-    for size in range(1, config.max_bundle_size + 1):
+    for size in range(1, min(config.max_bundle_size, len(interventions)) + 1):
         bundles.extend(combinations(interventions, size))
 
     results = []
@@ -97,32 +97,30 @@ def evaluate_bundle_candidates(
 
         rows = []
         for scenario in scenarios:
-            if bundle:
-                s, h = _apply_bundle(scenario, hubs, bundle)
-            else:
-                s, h = scenario, hubs
-            rows.append(run_scenario(s, demand, h, cost_matrix, fleet))
+            s, h = _apply_bundle(scenario, hubs, bundle)
+            _, metrics = run_scenario(demand, h, fleet, cost_matrix, s)
+            rows.append(metrics)
 
         summary = _summary(rows, config.service_target)
-        reliability = summary["probability_target_met"]
         objective = (
             cost
             + config.unmet_weight * summary["expected_unmet_demand"]
             + config.cvar_weight * summary["transport_cost_cvar95"]
         )
-
         results.append({
             "bundle_id": "baseline" if not bundle else "+".join(i.intervention_id for i in bundle),
             "intervention_cost": cost,
-            "probability_target_met": reliability,
             **summary,
             "objective_value": objective,
-            "feasible": reliability >= config.required_reliability,
+            "feasible": summary["probability_target_met"] >= config.required_reliability,
             "selected_interventions": [i.intervention_id for i in bundle],
         })
 
+    if not results:
+        raise ValueError("No intervention bundle fits the configured budget.")
+
     out = pd.DataFrame(results)
-    out["pareto_efficient"] = False
+    efficient = []
     for i, row in out.iterrows():
         dominated = (
             (out["intervention_cost"] <= row["intervention_cost"])
@@ -132,8 +130,8 @@ def evaluate_bundle_candidates(
                 | (out["probability_target_met"] > row["probability_target_met"])
             )
         )
-        out.loc[i, "pareto_efficient"] = not bool(dominated.any())
-
+        efficient.append(not bool(dominated.any()))
+    out["pareto_efficient"] = efficient
     return out.sort_values(
         ["feasible", "objective_value", "intervention_cost"],
         ascending=[False, True, True],
