@@ -43,6 +43,8 @@ def main():
     p.add_argument("--required-reliability", type=float, default=0.90)
     p.add_argument("--service-target", type=float, default=0.95)
     p.add_argument("--max-bundle-size", type=int, default=3)
+    p.add_argument("--pilot-simulations", type=int, default=30)
+    p.add_argument("--final-candidates", type=int, default=75)
     p.add_argument("--top-hubs", type=int, default=5)
     p.add_argument("--output", default="data/artifacts/intervention_bundles.csv")
     p.add_argument("--no-persist", action="store_true")
@@ -101,6 +103,14 @@ def main():
         service_target=args.service_target,
         required_reliability=args.required_reliability,
         max_bundle_size=args.max_bundle_size,
+        pilot_simulations=args.pilot_simulations,
+        final_candidate_limit=args.final_candidates,
+    )
+    print(
+        f"Bundle search: {args.n_simulations} full simulations, "
+        f"{args.pilot_simulations} pilot simulations, "
+        f"max {args.final_candidates} final candidates.",
+        flush=True,
     )
     results = evaluate_bundle_candidates(
         demand, hubs, route_matrix, fleet, interventions, cfg
