@@ -195,6 +195,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             unmet_written = True
 
         if not unmet_written and route_unmet > 0:
+            rc = route.get((o, j), {})
             rows.append({
                 "origin_hub": o,
                 "destination_hub": j,
@@ -203,8 +204,8 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
                 "parcels": 0.0,
                 "unmet_parcels": route_unmet,
                 "trips": 0,
-                "distance_km": route[(o, j)]["distance_km"],
-                "travel_time_hours": route[(o, j)]["travel_time_hours"],
+                "distance_km": rc.get("distance_km"),
+                "travel_time_hours": rc.get("travel_time_hours"),
                 "transport_cost": 0.0,
             })
 
