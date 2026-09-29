@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import pandas as pd
 from supabase import create_client
+from src.core.config import MODEL_VERSION
 from src.optimization.network import build_cost_matrix,build_road_cost_matrix
 class ProductionData:
  def __init__(self):
@@ -19,7 +20,19 @@ class ProductionData:
   hubs=hubs.merge(cap[["hub_id","capacity_parcels"]],on="hub_id",how="left")
   forecast=self.fetch_all("logistics_forecast_predictions","forecast_date,origin_hub_id,destination_hub_id,xgb_pred,model_version")
   if forecast.empty: raise RuntimeError("No production forecast predictions available")
-  forecast["forecast_date"]=pd.to_datetime(forecast.forecast_date); latest=forecast.forecast_date.max(); f=forecast[forecast.forecast_date==latest].copy()
+  forecast["forecast_date"]=pd.to_datetime(forecast.forecast_date)
+  latest=forecast.forecast_date.max()
+  f=forecast[forecast.forecast_date==latest].copy()
+  preferred=MODEL_VERSION
+  if preferred in set(f.model_version.astype(str)):
+   selected_version=preferred
+  else:
+   selected_version=sorted(f.model_version.astype(str).unique())[-1]
+  f=f[f.model_version.astype(str)==selected_version].copy()
+  if f.empty:
+   raise RuntimeError("No forecast rows available for the selected production model version")
   demand=f.rename(columns={"origin_hub_id":"origin_hub","destination_hub_id":"destination_hub","xgb_pred":"parcel_count"})[["origin_hub","destination_hub","parcel_count"]]
+  demand["parcel_count"]=pd.to_numeric(demand["parcel_count"],errors="coerce").fillna(0).clip(lower=0)
+  demand=demand.groupby(["origin_hub","destination_hub"],as_index=False)["parcel_count"].sum()
   cost=build_road_cost_matrix(road) if not road.empty else build_cost_matrix(hubs)
-  return {"hubs":hubs,"fleet":fleet,"cost":cost,"demand":demand,"forecast_date":str(latest.date()),"model_version":str(f.iloc[0].model_version)}
+  return {"hubs":hubs,"fleet":fleet,"cost":cost,"demand":demand,"forecast_date":str(latest.date()),"model_version":selected_version}
