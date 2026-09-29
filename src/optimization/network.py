@@ -1,15 +1,27 @@
 import pandas as pd
 try: from ortools.linear_solver import pywraplp
 except ImportError: pywraplp=None
-from src.core.geo import haversine_km
 UNMET_PENALTY=1000.0
 def build_cost_matrix(hubs):
+    """Fallback analytical matrix; production runs should pass the OSRM matrix."""
     rows=[]
+    from src.core.geo import haversine_km
     for _,a in hubs.iterrows():
         for _,b in hubs.iterrows():
             if a.hub_id==b.hub_id: continue
-            km=haversine_km(a.lat,a.lon,b.lat,b.lon)*1.18; rows.append({'origin_hub':a.hub_id,'destination_hub':b.hub_id,'distance_km':km,'unit_cost':2.2+.075*km})
+            km=haversine_km(a.lat,a.lon,b.lat,b.lon)*1.18
+            rows.append({'origin_hub':a.hub_id,'destination_hub':b.hub_id,'distance_km':km,'unit_cost':2.2+.075*km})
     return pd.DataFrame(rows)
+
+def build_road_cost_matrix(route_matrix):
+    """Convert logistics_road_matrix rows into the optimizer cost schema."""
+    r=route_matrix.copy()
+    r=r[r.origin_hub_id != r.destination_hub_id].copy()
+    r['origin_hub']=r['origin_hub_id'].astype(int)
+    r['destination_hub']=r['destination_hub_id'].astype(int)
+    r['distance_km']=r['distance_km'].astype(float)
+    r['unit_cost']=2.2 + 0.075*r['distance_km']
+    return r[['origin_hub','destination_hub','distance_km','unit_cost','travel_time_hours']]
 def solve_network(demand,hubs,cost=None,capacity_multiplier=1.0,service_level_target=.95):
     d=demand.copy(); d['parcel_count']=pd.to_numeric(d.parcel_count).clip(lower=0); cost=cost if cost is not None else build_cost_matrix(hubs)
     c={(r.origin_hub,r.destination_hub):float(r.unit_cost) for _,r in cost.iterrows()}; dist={(r.origin_hub,r.destination_hub):float(r.distance_km) for _,r in cost.iterrows()}
