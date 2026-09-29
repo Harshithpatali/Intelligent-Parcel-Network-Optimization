@@ -17,8 +17,11 @@ class Scenario:
 
 def apply_scenario(demand, hubs, fleet, cost, scenario: Scenario):
     d = demand.copy()
+    demand_column = "parcel_count" if "parcel_count" in d.columns else "demand"
+    if demand_column not in d.columns:
+        raise ValueError("Demand frame must contain either 'parcel_count' or 'demand'.")
     d["parcel_count"] = (
-        pd.to_numeric(d["parcel_count"]).clip(lower=0)
+        pd.to_numeric(d[demand_column]).clip(lower=0)
         * scenario.demand_multiplier
     )
 
