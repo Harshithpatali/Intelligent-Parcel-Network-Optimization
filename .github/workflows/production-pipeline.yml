@@ -39,6 +39,7 @@ env:
   OSRM_PROFILE: driving
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: ${{ github.workspace }}
+  SIMULATIONS: ${{ inputs.simulations || '500' }}
 
 jobs:
   prepare:
@@ -155,3 +156,5 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Verify production data
         run: python scripts/pre_deploy_check.py
+      - name: Verify complete analytics
+        run: python scripts/final_production_gate.py
