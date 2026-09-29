@@ -19,7 +19,7 @@ class Intervention:
     fixed_cost: float = 0.0
     variable_cost: float = 0.0
     capacity_uplift: float = 0.0
-    target_hub_id: Optional[int] = None
+    target_hub_id: Optional[object] = None
     fleet_uplift: float = 0.0
     reserve_vehicle_multiplier: float = 0.0
     description: str = ""
@@ -46,7 +46,7 @@ def _apply_intervention(scenario, hubs, intervention):
     )
 
     if intervention.target_hub_id is not None and intervention.capacity_uplift:
-        mask = hubs_out["hub_id"].astype(int) == int(intervention.target_hub_id)
+        mask = hubs_out["hub_id"] == intervention.target_hub_id
         hubs_out.loc[mask, "capacity_parcels"] *= capacity_multiplier
         capacity_multiplier = 1.0
 
