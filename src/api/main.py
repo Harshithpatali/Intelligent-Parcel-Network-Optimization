@@ -9,7 +9,7 @@ from src.core.observability import REQUESTS,LATENCY,OPTIMIZATION_RUNS,UNMET_PARC
 from src.api.schemas import ForecastRequest,OptimizeRequest,ScenarioRequest
 from src.data.demo import generate_demo
 from src.models.forecast import fit_forecaster
-from src.optimization.network import solve_network
+from src.optimization.network import solve_network,build_cost_matrix
 from src.optimization.scenarios import Scenario,run_scenario
 configure_logging(LOG_LEVEL); logger=logging.getLogger('parcel-api'); app=FastAPI(title='Intelligent Parcel Network Optimization',version='2.0.0',docs_url='/docs' if APP_ENV!='production' else None); app.add_middleware(CORSMiddleware,allow_origins=ALLOWED_ORIGINS,allow_credentials=False,allow_methods=['GET','POST'],allow_headers=['*']); demand,parcels,hubs=generate_demo()
 @app.middleware('http')
@@ -36,7 +36,7 @@ def summary(): return {'orders_demo':int(len(parcels)),'demand_rows':int(len(dem
 def network(): return {'hubs':hubs.to_dict(orient='records'),'demand_rows':int(len(demand)),'model_version':MODEL_VERSION,'optimizer_version':OPTIMIZER_VERSION}
 @app.post('/forecast')
 def forecast(req:ForecastRequest):
- result=fit_forecaster(demand.tail(req.days*len(hubs)*(len(hubs)-1))); 
+ result=fit_forecaster(demand.tail(req.days*len(hubs)*(len(hubs)-1)))
  if result.get('test_mae') is not None: FORECAST_MAE.set(result['test_mae'])
  return {**result,'model_version':MODEL_VERSION}
 @app.post('/optimize')
@@ -48,5 +48,7 @@ def optimize(req:OptimizeRequest):
 def scenario(req:ScenarioRequest):
  scenarios={'demand_surge':Scenario('demand_surge','demand_surge',demand_multiplier=1.30),'hub_outage':Scenario('hub_outage','hub_outage',capacity_multiplier=.60),'combined':Scenario('combined','combined',demand_multiplier=1.30,capacity_multiplier=.70)}
  try:
-  d=demand.tail(7*len(hubs)*(len(hubs)-1)).groupby(['origin_hub','destination_hub'],as_index=False).parcel_count.sum(); flows,m=run_scenario(d,hubs, __import__('src.optimization.network', fromlist=['build_cost_matrix']).build_cost_matrix(hubs), scenarios[req.scenario]); UNMET_PARCELS.set(m['unmet_demand']); OPTIMIZATION_RUNS.labels(m['status']).inc(); return {'metrics':m,'flows':flows.to_dict(orient='records')}
+  d=demand.tail(7*len(hubs)*(len(hubs)-1)).groupby(['origin_hub','destination_hub'],as_index=False).parcel_count.sum()
+  flows,m=run_scenario(d,hubs,build_cost_matrix(hubs),__import__('src.data.demo',fromlist=['generate_demo']).generate_demo()[2] if False else __import__('pandas').DataFrame(),scenarios[req.scenario])
+  UNMET_PARCELS.set(m['unmet_demand']); OPTIMIZATION_RUNS.labels(m['status']).inc(); return {'metrics':m,'flows':flows.to_dict(orient='records')}
  except Exception: OPTIMIZATION_RUNS.labels('error').inc(); logger.exception('scenario_failed'); raise HTTPException(400,{'detail':'Scenario request failed','request_id':request_id_ctx.get()})
