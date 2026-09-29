@@ -1,4 +1,5 @@
 from __future__ import annotations
+import argparse
 import os, uuid
 from pathlib import Path
 
@@ -21,6 +22,14 @@ def fetch_all(sb, table, select="*"):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n-simulations", type=int, default=500)
+    parser.add_argument("--forecast-date", default=None)
+    args = parser.parse_args()
+
+    if args.n_simulations < 1:
+        raise ValueError("--n-simulations must be >= 1")
+
     load_dotenv()
     sb = create_client(
         os.environ["SUPABASE_URL"],
@@ -31,7 +40,17 @@ def main():
     if sims.empty:
         raise RuntimeError("No resilience simulations available.")
     sims["created_at"] = pd.to_datetime(sims["created_at"])
-    latest = sims.sort_values("created_at", ascending=False).head(500).sort_values("created_at")
+    if args.forecast_date and "forecast_date" in sims.columns:
+        sims["forecast_date"] = pd.to_datetime(sims["forecast_date"]).dt.date
+        target_date = pd.to_datetime(args.forecast_date).date()
+        sims = sims[sims["forecast_date"] == target_date].copy()
+        if sims.empty:
+            raise RuntimeError(f"No resilience simulations found for {target_date}.")
+    latest = sims.sort_values("created_at", ascending=False).head(args.n_simulations).sort_values("created_at")
+    if len(latest) < args.n_simulations:
+        raise RuntimeError(
+            f"Requested {args.n_simulations} simulations but only {len(latest)} are available."
+        )
 
     run_id = str(uuid.uuid4())
     rows, summary = analyze_simulations(latest, run_id)
