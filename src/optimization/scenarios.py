@@ -23,7 +23,7 @@ def apply_scenario(demand, hubs, fleet, cost, scenario: Scenario):
     )
 
     h = hubs.copy()
-    f = fleet.copy()
+    f = fleet.copy() if fleet is not None else None
     c = cost.copy()
 
     if scenario.disabled_hubs:
