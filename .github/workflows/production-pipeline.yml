@@ -1,6 +1,9 @@
 name: Production Analytics Pipeline
 
 on:
+  push:
+    paths:
+      - .production-trigger
   workflow_dispatch:
     inputs:
       forecast_date:
@@ -30,8 +33,8 @@ concurrency:
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-  MODEL_VERSION: ${{ inputs.model_version }}
-  FORECAST_DATE: ${{ inputs.forecast_date }}
+  MODEL_VERSION: ${{ inputs.model_version || 'hub-od-xgb-v1' }}
+  FORECAST_DATE: ${{ inputs.forecast_date || '2018-09-03' }}
   OSRM_URL: https://router.project-osrm.org
   OSRM_PROFILE: driving
   PYTHONUNBUFFERED: "1"
@@ -112,7 +115,7 @@ jobs:
           python scripts/run_probabilistic_resilience.py \
             --forecast-date "$FORECAST_DATE" \
             --model-version "$MODEL_VERSION" \
-            --n-simulations "${{ inputs.simulations }}"
+            --n-simulations "${{ inputs.simulations || '500' }}"
       - name: Targeted hub interventions
         run: |
           python scripts/run_targeted_hub_interventions.py \
@@ -125,7 +128,7 @@ jobs:
             --forecast-date "$FORECAST_DATE" \
             --model-version "$MODEL_VERSION" \
             --n-simulations "${{ inputs.simulations }}" \
-            --budget "${{ inputs.budget }}"
+            --budget "${{ inputs.budget || '100' }}"
       - uses: actions/upload-artifact@v4
         with:
           name: resilience-results
