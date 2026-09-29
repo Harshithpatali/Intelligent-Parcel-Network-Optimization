@@ -117,6 +117,7 @@ def run_probabilistic_simulation(
         service = float(metrics["service_level"])
         rows.append({
             "simulation_index": i,
+            "simulation_seed": config.seed,
             "scenario_name": scenario.name,
             "demand_multiplier": scenario.demand_multiplier,
             "capacity_multiplier": scenario.capacity_multiplier,
