@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import requests
 from supabase import create_client
 
-OSRM_URL = os.getenv("OSRM_URL", "https://router.project-osrm.org")
+OSRM_URL = os.getenv("OSRM_URL", os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org"))
 PROFILE = os.getenv("OSRM_PROFILE", "driving")
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
