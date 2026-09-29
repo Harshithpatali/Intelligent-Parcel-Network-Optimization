@@ -1,0 +1,25 @@
+-- Step 5 forecasting tables. Feature values are generated from the observed Olist OD panel.
+create table if not exists public.logistics_hub_od_features (
+  purchase_date date not null,
+  origin_hub_id integer not null,
+  destination_hub_id integer not null,
+  parcel_count double precision not null,
+  order_count double precision not null,
+  total_weight_kg double precision not null,
+  total_volume_m3 double precision not null,
+  lag_1 double precision,
+  lag_7 double precision,
+  lag_14 double precision,
+  lag_28 double precision,
+  lag_weight_7 double precision,
+  lag_volume_7 double precision,
+  rolling_mean_7 double precision,
+  rolling_mean_28 double precision,
+  rolling_std_28 double precision,
+  day_of_week integer not null,
+  month_num integer not null,
+  day_of_month integer not null,
+  day_of_year integer not null,
+  route_distance_km double precision,
+  split text not null
+);
