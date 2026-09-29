@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11', cache: pip}
+      - run: pip install -r requirements.txt
+      - run: python scripts/generate_demo.py
+      - run: python scripts/validate_data.py
+      - run: python -m compileall -q src app scripts
+      - run: pytest -q
+      - run: python -m pip check
+  container:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag parcel-network-optimization:${{ github.sha }} .
