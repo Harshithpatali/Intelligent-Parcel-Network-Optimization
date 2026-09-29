@@ -122,6 +122,18 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         else:
             solver.Add(sum(route_vars) + u[(o, j)] >= q)
 
+    # Fleet hours are shared across the network: a vehicle cannot be counted on
+    # multiple OD routes simultaneously.
+    for _, fr in fleet.iterrows():
+        vt = str(fr.vehicle_type)
+        hour_terms = [
+            float(route[(o, j)]["travel_time_hours"]) * y[(o, j, vt)]
+            for (o, j), _ in routes
+            if (o, j, vt) in y
+        ]
+        if hour_terms:
+            solver.Add(sum(hour_terms) <= float(fr.vehicle_count) * float(fr.operating_hours_per_day))
+
     # Hub handling capacity applies to both outbound and inbound parcels.
     for h, cap in caps.items():
         outbound = [v for (o, j, vt), v in x.items() if o == h]
@@ -153,6 +165,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     rows = []
     for (o, j), requested in routes:
         route_unmet = u[(o, j)].solution_value()
+        unmet_written = False
         for _, fr in fleet.iterrows():
             vt = str(fr.vehicle_type)
             key = (o, j, vt)
@@ -164,13 +177,14 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
                 continue
             rc = route[(o, j)]
             trip_cost = float(fr.fixed_trip_cost) + float(fr.cost_per_km) * rc["distance_km"]
+            unmet_written = True
             rows.append({
                 "origin_hub": o,
                 "destination_hub": j,
                 "vehicle_type": vt,
                 "requested_parcels": requested,
                 "parcels": parcels,
-                "unmet_parcels": route_unmet if trips else 0.0,
+                "unmet_parcels": route_unmet if not unmet_written else 0.0,
                 "trips": trips,
                 "distance_km": rc["distance_km"],
                 "travel_time_hours": rc["travel_time_hours"],
