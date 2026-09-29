@@ -28,10 +28,8 @@ def apply_scenario(demand, hubs, fleet, cost, scenario: Scenario):
 
     if scenario.disabled_hubs:
         disabled = set(scenario.disabled_hubs)
-        d = d[
-            ~d.origin_hub.isin(disabled)
-            & ~d.destination_hub.isin(disabled)
-        ].copy()
+        # Keep affected demand so the optimizer records it as unmet.
+        # Only remove the failed hub and its network connections.
         h = h[~h.hub_id.isin(disabled)].copy()
         c = c[
             ~c.origin_hub.isin(disabled)
