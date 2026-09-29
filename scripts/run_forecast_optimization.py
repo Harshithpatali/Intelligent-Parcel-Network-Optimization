@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--model-version", default=None)
     parser.add_argument("--capacity-multiplier", type=float, default=1.0)
     parser.add_argument("--output", default="data/artifacts/optimized_forecast_flows.csv")
+    parser.add_argument("--no-persist", action="store_true", help="Do not write optimized flows to Supabase")
     args = parser.parse_args()
 
     load_dotenv()
@@ -113,6 +114,17 @@ def main():
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     flows.to_csv(out, index=False)
+
+    if not args.no_persist and not flows.empty:
+        persist_cols = [
+            "run_id", "forecast_date", "origin_hub", "destination_hub",
+            "vehicle_type", "requested_parcels", "parcels", "unmet_parcels",
+            "trips", "distance_km", "travel_time_hours", "transport_cost",
+            "model_version",
+        ]
+        client.table("logistics_optimized_flows").insert(
+            flows[persist_cols].where(pd.notna(flows[persist_cols]), None).to_dict("records")
+        ).execute()
 
     print({
         "run_id": run_id,
