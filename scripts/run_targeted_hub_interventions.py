@@ -65,9 +65,9 @@ def main():
         columns={
             "origin_hub_id": "origin_hub",
             "destination_hub_id": "destination_hub",
-            "xgb_pred": "demand",
+            "xgb_pred": "parcel_count",
         }
-    )[["origin_hub", "destination_hub", "demand"]]
+    )[["origin_hub", "destination_hub", "parcel_count"]]
 
     hubs = fetch_all(sb, "logistics_hubs")
     capacity = fetch_all(sb, "logistics_hub_capacity")
