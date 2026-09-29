@@ -1,0 +1,17 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+streamlit==1.49.1
+pandas==2.3.2
+numpy==2.2.6
+scikit-learn==1.7.1
+xgboost==3.0.5
+ortools==9.14.6206
+requests==2.32.5
+python-dotenv==1.1.1
+supabase==2.18.1
+pydantic==2.11.7
+pytest==8.4.2
+httpx==0.28.1
+plotly==6.3.0
+prometheus-client==0.22.1
+joblib==1.5.1
