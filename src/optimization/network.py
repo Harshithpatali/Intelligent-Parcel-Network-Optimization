@@ -88,11 +88,19 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
 
     # Keep every demand route. If a route is absent because of a hub/road
     # disruption, its demand must remain in the denominator and become unmet.
+    # Same-hub OD demand represents parcels whose origin and destination
+    # fall in the same candidate hub catchment. It does not require a
+    # linehaul route in this network model, so treat it as locally served
+    # rather than incorrectly counting it as road/fleet unmet demand.
+    local_parcels = float(
+        d.loc[d["origin_hub"] == d["destination_hub"], "parcel_count"].sum()
+    )
     routes = [
         ((r.origin_hub, r.destination_hub), float(r.parcel_count))
         for _, r in d.iterrows()
+        if r.origin_hub != r.destination_hub
     ]
-    if not routes:
+    if not routes and local_parcels <= 0:
         raise ValueError("Demand contains no OD routes")
 
     x = {}  # parcels by route and vehicle type
@@ -225,6 +233,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         "service_level_target": service_level_target,
         "objective_with_unmet_penalty": total_cost + total_unmet * UNMET_PENALTY,
         "total_parcels": total_requested - total_unmet,
+        "local_parcels_assumed_served": local_parcels,
         "fleet_vehicle_types": int(fleet.vehicle_type.nunique()),
         "routes_optimized": len(routes),
     }
