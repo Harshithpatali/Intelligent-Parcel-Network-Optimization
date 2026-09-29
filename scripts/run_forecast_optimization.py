@@ -4,6 +4,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client
@@ -122,8 +123,10 @@ def main():
             "trips", "distance_km", "travel_time_hours", "transport_cost",
             "model_version",
         ]
+        persist_df = flows[persist_cols].replace([np.inf, -np.inf], np.nan).astype(object)
+        persist_df = persist_df.where(pd.notna(persist_df), None)
         client.table("logistics_optimized_flows").insert(
-            flows[persist_cols].where(pd.notna(flows[persist_cols]), None).to_dict("records")
+            persist_df.to_dict("records")
         ).execute()
 
     print({
