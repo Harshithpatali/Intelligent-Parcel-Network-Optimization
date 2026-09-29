@@ -134,10 +134,6 @@ def main():
     results.to_csv(out, index=False)
 
     if not args.no_persist:
-        rows = results[[
-            "forecast_date", "seed", "demand_multiplier"
-        ]] if False else None
-
         # Simulation-level persistence is inserted in chunks to avoid oversized requests.
         records = results[[
             "scenario_name", "forecast_date", "demand_multiplier",
