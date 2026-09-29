@@ -149,7 +149,8 @@ def _pareto_flags(out):
 
 
 def _evaluate_bundles(demand, hubs, cost_matrix, fleet, bundles, scenarios,
-                      target, progress_label):
+                      target, required_reliability, unmet_weight, cvar_weight,
+                      progress_label):
     results = []
     total = len(bundles)
     for idx, bundle in enumerate(bundles, start=1):
@@ -167,9 +168,10 @@ def _evaluate_bundles(demand, hubs, cost_matrix, fleet, bundles, scenarios,
             **summary,
             "objective_value": (
                 cost
-                + summary["expected_unmet_demand"]
+                + unmet_weight * summary["expected_unmet_demand"]
+                + cvar_weight * summary["transport_cost_cvar95"]
             ),
-            "feasible": summary["probability_target_met"] >= target,
+            "feasible": summary["probability_target_met"] >= required_reliability,
             "selected_interventions": [i.intervention_id for i in bundle],
         })
         if idx == 1 or idx == total or idx % 10 == 0:
@@ -256,7 +258,7 @@ def evaluate_bundle_candidates(
         and i.reserve_vehicle_multiplier == 0
         and i.capacity_uplift >= 0
         for i in interventions
-    )
+    ) and config.cvar_weight == 0 and config.unmet_weight >= 0
     if capacity_only:
         bundles = _deterministically_non_dominated(
             bundles, hubs, config.budget
@@ -275,7 +277,12 @@ def evaluate_bundle_candidates(
     pilot_scenarios = scenarios[:pilot_n]
     pilot_rows = _evaluate_bundles(
         demand, hubs, cost_matrix, fleet, bundles,
-        pilot_scenarios, config.service_target, "Pilot bundle evaluation"
+        pilot_scenarios,
+        config.service_target,
+        config.required_reliability,
+        config.unmet_weight,
+        config.cvar_weight,
+        "Pilot bundle evaluation",
     )
     pilot = pd.DataFrame(pilot_rows)
 
@@ -295,7 +302,12 @@ def evaluate_bundle_candidates(
     )
     final_rows = _evaluate_bundles(
         demand, hubs, cost_matrix, fleet, final_bundles,
-        scenarios, config.service_target, "Full bundle evaluation"
+        scenarios,
+        config.service_target,
+        config.required_reliability,
+        config.unmet_weight,
+        config.cvar_weight,
+        "Full bundle evaluation",
     )
 
     out = pd.DataFrame(final_rows)
