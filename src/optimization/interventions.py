@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,6 +19,7 @@ class Intervention:
     fixed_cost: float = 0.0
     variable_cost: float = 0.0
     capacity_uplift: float = 0.0
+    target_hub_id: Optional[int] = None
     fleet_uplift: float = 0.0
     reserve_vehicle_multiplier: float = 0.0
     description: str = ""
@@ -35,9 +36,9 @@ class InterventionConfig:
     horizon_days: int = 1
 
 
-def _with_multipliers(scenario, capacity=1.0, fleet=1.0):
+def _with_multipliers(scenario, hubs, capacity=1.0, target_hub_id=None, fleet=1.0):
     from .scenarios import Scenario
-    return Scenario(
+    if target_hub_id is not None and capacity != 1.0:\n        hubs.loc[hubs["hub_id"].astype(int) == int(target_hub_id), "capacity_parcels"] *= capacity\n        return Scenario(\n            name=scenario.name,\n            scenario_type=scenario.scenario_type,\n            demand_multiplier=scenario.demand_multiplier,\n            capacity_multiplier=scenario.capacity_multiplier,\n            fleet_multiplier=scenario.fleet_multiplier * fleet,\n            disabled_hubs=list(scenario.disabled_hubs),\n            disabled_routes=list(scenario.disabled_routes),\n        )\n    return Scenario(
         name=scenario.name,
         scenario_type=scenario.scenario_type,
         demand_multiplier=scenario.demand_multiplier,
