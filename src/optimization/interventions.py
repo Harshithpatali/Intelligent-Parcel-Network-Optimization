@@ -36,17 +36,30 @@ class InterventionConfig:
     horizon_days: int = 1
 
 
-def _with_multipliers(scenario, hubs, capacity=1.0, target_hub_id=None, fleet=1.0):
+def _apply_intervention(scenario, hubs, intervention):
     from .scenarios import Scenario
-    if target_hub_id is not None and capacity != 1.0:\n        hubs.loc[hubs["hub_id"].astype(int) == int(target_hub_id), "capacity_parcels"] *= capacity\n        return Scenario(\n            name=scenario.name,\n            scenario_type=scenario.scenario_type,\n            demand_multiplier=scenario.demand_multiplier,\n            capacity_multiplier=scenario.capacity_multiplier,\n            fleet_multiplier=scenario.fleet_multiplier * fleet,\n            disabled_hubs=list(scenario.disabled_hubs),\n            disabled_routes=list(scenario.disabled_routes),\n        )\n    return Scenario(
+
+    hubs_out = hubs.copy()
+    capacity_multiplier = 1.0 + intervention.capacity_uplift
+    fleet_multiplier = (
+        1.0 + intervention.fleet_uplift + intervention.reserve_vehicle_multiplier
+    )
+
+    if intervention.target_hub_id is not None and intervention.capacity_uplift:
+        mask = hubs_out["hub_id"].astype(int) == int(intervention.target_hub_id)
+        hubs_out.loc[mask, "capacity_parcels"] *= capacity_multiplier
+        capacity_multiplier = 1.0
+
+    scenario_out = Scenario(
         name=scenario.name,
         scenario_type=scenario.scenario_type,
         demand_multiplier=scenario.demand_multiplier,
-        capacity_multiplier=scenario.capacity_multiplier * capacity,
-        fleet_multiplier=scenario.fleet_multiplier * fleet,
+        capacity_multiplier=scenario.capacity_multiplier * capacity_multiplier,
+        fleet_multiplier=scenario.fleet_multiplier * fleet_multiplier,
         disabled_hubs=list(scenario.disabled_hubs),
         disabled_routes=list(scenario.disabled_routes),
     )
+    return scenario_out, hubs_out
 
 
 def _q(values, q):
@@ -109,13 +122,13 @@ def evaluate_interventions(
     for scenario in scenarios:
         baseline_rows.append(run_scenario(scenario, demand, hubs, cost_matrix, fleet))
         for intervention in interventions:
-            modified = _with_multipliers(
-                scenario,
-                capacity=1.0 + intervention.capacity_uplift,
-                fleet=1.0 + intervention.fleet_uplift + intervention.reserve_vehicle_multiplier,
+            modified_scenario, modified_hubs = _apply_intervention(
+                scenario, hubs, intervention
             )
             intervention_rows[intervention.intervention_id].append(
-                run_scenario(modified, demand, hubs, cost_matrix, fleet)
+                run_scenario(
+                    modified_scenario, demand, modified_hubs, cost_matrix, fleet
+                )
             )
 
     baseline = _summary(
