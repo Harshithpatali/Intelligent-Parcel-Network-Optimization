@@ -60,3 +60,29 @@ def test_bundle_optimizer_reproducible():
     assert a[["bundle_id", "probability_target_met"]].equals(
         b[["bundle_id", "probability_target_met"]]
     )
+
+
+def test_unavailable_route_is_counted_as_unmet():
+    import pandas as pd
+    from src.optimization.network import solve_network
+    demand = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "parcel_count": 10},
+        {"origin_hub": 2, "destination_hub": 1, "parcel_count": 20},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": 1, "capacity_parcels": 100},
+        {"hub_id": 2, "capacity_parcels": 100},
+    ])
+    fleet = pd.DataFrame([{
+        "vehicle_type": "default", "vehicle_count": 10, "parcel_capacity": 20,
+        "operating_hours_per_day": 12.0, "fixed_trip_cost": 1.0,
+        "cost_per_km": 0.01, "max_trip_hours": 12.0
+    }])
+    cost = pd.DataFrame([{
+        "origin_hub": 1, "destination_hub": 2, "distance_km": 10.0,
+        "unit_cost": 1.0, "travel_time_hours": 1.0
+    }])
+    _, metrics = solve_network(demand, hubs, cost=cost, fleet=fleet)
+    assert metrics["total_parcels"] == 10
+    assert metrics["unmet_demand"] == 20
+    assert metrics["service_level"] == 10 / 30
