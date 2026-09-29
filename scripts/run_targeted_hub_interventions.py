@@ -72,10 +72,10 @@ def main():
     hubs = fetch_all(sb, "logistics_hubs")
     capacity = fetch_all(sb, "logistics_hub_capacity")
     hubs = hubs.merge(
-        capacity[["hub_id", "capacity_parcels_per_day"]],
+        capacity[["hub_id", "capacity_parcels"]],
         on="hub_id",
         how="left",
-    ).rename(columns={"capacity_parcels_per_day": "capacity_parcels"})
+    )
 
     fleet = fetch_all(sb, "logistics_fleet")
     road = fetch_all(sb, "logistics_road_matrix")
