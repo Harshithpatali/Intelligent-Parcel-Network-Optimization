@@ -121,13 +121,13 @@ jobs:
           python scripts/run_targeted_hub_interventions.py \
             --forecast-date "$FORECAST_DATE" \
             --model-version "$MODEL_VERSION" \
-            --n-simulations "${{ inputs.simulations }}"
+            --n-simulations "${{ inputs.simulations || '500' }}"
       - name: Intervention bundles
         run: |
           python scripts/run_intervention_bundles.py \
             --forecast-date "$FORECAST_DATE" \
             --model-version "$MODEL_VERSION" \
-            --n-simulations "${{ inputs.simulations }}" \
+            --n-simulations "${{ inputs.simulations || '500' }}" \
             --budget "${{ inputs.budget || '100' }}"
       - uses: actions/upload-artifact@v4
         with:
