@@ -50,14 +50,14 @@ def generate_random_scenario(hubs, cost, rng, index, config):
         config.fleet_min, config.fleet_max
     )
 
-    hub_ids = hubs.hub_id.astype(int).tolist()
+    hub_ids = hubs.hub_id.tolist()
     failed_hubs = tuple(
-        int(h) for h in hub_ids
+        h for h in hub_ids
         if rng.random() < config.hub_failure_probability
     )[:config.max_hub_failures]
 
     route_pairs = list(dict.fromkeys(
-        zip(cost.origin_hub.astype(int), cost.destination_hub.astype(int))
+        zip(cost.origin_hub, cost.destination_hub)
     ))
     failed_routes = tuple(
         pair for pair in route_pairs
