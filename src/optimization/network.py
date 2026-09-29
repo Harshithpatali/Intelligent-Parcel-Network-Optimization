@@ -30,8 +30,8 @@ def build_road_cost_matrix(route_matrix):
     """Convert logistics_road_matrix rows into the optimizer cost schema."""
     r = route_matrix.copy()
     r = r[r.origin_hub_id != r.destination_hub_id].copy()
-    r["origin_hub"] = r.origin_hub_id.astype(int)
-    r["destination_hub"] = r.destination_hub_id.astype(int)
+    r["origin_hub"] = r.origin_hub_id
+    r["destination_hub"] = r.destination_hub_id
     r["distance_km"] = r.distance_km.astype(float)
     r["travel_time_hours"] = r.travel_time_hours.astype(float)
     r["unit_cost"] = 2.2 + 0.075 * r.distance_km
@@ -57,14 +57,14 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
 
     route = {}
     for _, r in cost.iterrows():
-        route[(int(r.origin_hub), int(r.destination_hub))] = {
+        route[(r.origin_hub, r.destination_hub)] = {
             "distance_km": float(r.distance_km),
             "travel_time_hours": float(r.travel_time_hours),
             "unit_cost": float(r.unit_cost),
         }
 
     caps = {
-        int(row.hub_id): float(row.capacity_parcels) * capacity_multiplier
+        row.hub_id: float(row.capacity_parcels) * capacity_multiplier
         for _, row in hubs.iterrows()
     }
     if fleet is None:
@@ -89,7 +89,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     # Keep every demand route. If a route is absent because of a hub/road
     # disruption, its demand must remain in the denominator and become unmet.
     routes = [
-        ((int(r.origin_hub), int(r.destination_hub)), float(r.parcel_count))
+        ((r.origin_hub, r.destination_hub), float(r.parcel_count))
         for _, r in d.iterrows()
     ]
     if not routes:
@@ -150,7 +150,9 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     for (o, j), _ in routes:
         u[(o, j)].SetBounds(0, solver.infinity())
         obj.SetCoefficient(u[(o, j)], UNMET_PENALTY)
-        rc = route[(o, j)]
+        rc = route.get((o, j))
+        if rc is None:
+            continue
         for _, fr in fleet.iterrows():
             vt = str(fr.vehicle_type)
             key = (o, j, vt)
