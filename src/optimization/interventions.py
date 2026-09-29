@@ -40,6 +40,11 @@ def _apply_intervention(scenario, hubs, intervention):
     from .scenarios import Scenario
 
     hubs_out = hubs.copy()
+    # Intervention multipliers can be fractional (e.g. +25%), so make the
+    # capacity column explicitly float before applying them. This avoids
+    # pandas incompatible-dtype warnings while preserving the model's
+    # continuous capacity representation.
+    hubs_out["capacity_parcels"] = hubs_out["capacity_parcels"].astype(float)
     capacity_multiplier = 1.0 + intervention.capacity_uplift
     fleet_multiplier = (
         1.0 + intervention.fleet_uplift + intervention.reserve_vehicle_multiplier
