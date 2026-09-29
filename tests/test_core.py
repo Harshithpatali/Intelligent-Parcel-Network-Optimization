@@ -87,3 +87,22 @@ def test_unavailable_route_is_counted_as_unmet():
     assert metrics["total_parcels"] == 10
     assert metrics["unmet_demand"] == 20
     assert metrics["service_level"] == pytest.approx(10 / 30)
+
+
+def test_root_cause_decomposition_contract():
+    import pandas as pd
+    from src.analytics.root_cause import analyze_simulations
+    df=pd.DataFrame({
+        "service_level":[.9,.8,.7,.6], "unmet_demand":[10,20,30,40], "total_transport_cost":[100,110,120,130],
+        "demand_multiplier":[1,1.2,1,1.2], "capacity_multiplier":[1,1,.8,.8], "fleet_multiplier":[1,.9,1,.9],
+        "hub_failures":[0,0,1,2], "road_failures":[0,1,0,2],
+    })
+    out,summary=analyze_simulations(df,run_id="00000000-0000-0000-0000-000000000001")
+    assert len(out)>0 and summary["simulations"]==4 and out["run_id"].nunique()==1
+
+def test_intervention_catalog_contains_fleet_options():
+    from src.optimization.targeted_hub_interventions import build_targeted_interventions
+    demand,_,hubs=generate_demo(); d=demand.groupby(["origin_hub","destination_hub"],as_index=False).parcel_count.sum()
+    candidates=build_targeted_interventions(d,hubs)
+    assert any(i.fleet_uplift>0 for i in candidates)
+    assert any(i.reserve_vehicle_multiplier>0 for i in candidates)
