@@ -106,3 +106,14 @@ def test_intervention_catalog_contains_fleet_options():
     candidates=build_targeted_interventions(d,hubs)
     assert any(i.fleet_uplift>0 for i in candidates)
     assert any(i.reserve_vehicle_multiplier>0 for i in candidates)
+
+
+def test_hub_pressure_accepts_capacity_enriched_hubs():
+    from src.analytics.root_cause import hub_pressure_table
+    demand = pd.DataFrame({
+        "origin_hub": [1, 2], "destination_hub": [2, 1], "demand": [10.0, 20.0]
+    })
+    hubs = pd.DataFrame({"hub_id": [1, 2], "capacity_parcels": [20, 40]})
+    out = hub_pressure_table(demand, hubs)
+    assert len(out) == 2
+    assert "capacity_pressure" in out.columns
