@@ -78,60 +78,38 @@ def _deduplicate_interventions(interventions):
     return list(by_id.values())
 
 
-def _bundle_capacity_signature(bundle, hub_ids):
+def _bundle_resource_signature(bundle, hub_ids):
     """Return effective per-hub capacity uplift for a capacity-only bundle."""
     multipliers = {hub_id: 1.0 for hub_id in hub_ids}
+    fleet_multiplier = 1.0
     for intervention in bundle:
-        if intervention.capacity_uplift == 0:
-            continue
-        if intervention.target_hub_id is None:
-            for hub_id in multipliers:
-                multipliers[hub_id] *= 1.0 + intervention.capacity_uplift
-        elif intervention.target_hub_id in multipliers:
-            multipliers[intervention.target_hub_id] *= 1.0 + intervention.capacity_uplift
-    return tuple(round(multipliers[hub_id] - 1.0, 12) for hub_id in hub_ids)
+        if intervention.capacity_uplift:
+            if intervention.target_hub_id is None:
+                for hub_id in multipliers:
+                    multipliers[hub_id] *= 1.0 + intervention.capacity_uplift
+            elif intervention.target_hub_id in multipliers:
+                multipliers[intervention.target_hub_id] *= 1.0 + intervention.capacity_uplift
+        fleet_multiplier *= 1.0 + intervention.fleet_uplift + intervention.reserve_vehicle_multiplier
+    return tuple(round(multipliers[hub_id] - 1.0, 12) for hub_id in hub_ids) + (round(fleet_multiplier - 1.0, 12),)
 
 
 def _deterministically_non_dominated(bundles, hubs, budget):
-    """Prune bundles that are provably dominated before Monte Carlo.
-
-    This is only applied when every intervention is a capacity intervention.
-    Bundle A is dominated when it costs no more and supplies at least as much
-    effective capacity at every hub, with one strict improvement. Because
-    network service is monotone in available hub capacity, a dominated bundle
-    cannot improve the capacity-only objective used here.
-    """
-    candidates = [
-        b for b in bundles
-        if sum(i.total_cost(1) for i in b) <= budget
-    ]
-    if not candidates:
-        return []
-
+    """Prune bundles dominated on all monotone resources at no greater cost."""
+    candidates = [b for b in bundles if sum(i.total_cost(1) for i in b) <= budget]
     hub_ids = list(hubs.hub_id)
-    scored = [
-        (bundle, sum(i.total_cost(1) for i in bundle),
-         _bundle_capacity_signature(bundle, hub_ids))
-        for bundle in candidates
-    ]
-
+    scored = [(b, sum(i.total_cost(1) for i in b), _bundle_resource_signature(b, hub_ids)) for b in candidates]
     keep = []
     for bundle, cost, signature in scored:
         dominated = False
         for other_bundle, other_cost, other_signature in scored:
             if other_bundle == bundle:
                 continue
-            if (
-                other_cost <= cost
-                and all(a >= b for a, b in zip(other_signature, signature))
-                and (other_cost < cost or other_signature != signature)
-            ):
+            if other_cost <= cost and all(a >= b for a, b in zip(other_signature, signature)) and (other_cost < cost or other_signature != signature):
                 dominated = True
                 break
         if not dominated:
             keep.append(bundle)
     return keep
-
 
 def _pareto_flags(out):
     efficient = []
@@ -252,14 +230,9 @@ def evaluate_bundle_candidates(
     for size in range(1, min(config.max_bundle_size, len(interventions)) + 1):
         bundles.extend(combinations(interventions, size))
 
-    # Deterministic dominance is safe only for capacity-only catalogs.
-    capacity_only = all(
-        i.fleet_uplift == 0
-        and i.reserve_vehicle_multiplier == 0
-        and i.capacity_uplift >= 0
-        for i in interventions
-    ) and config.cvar_weight == 0 and config.unmet_weight >= 0
-    if capacity_only:
+    # Service and unmet-demand objectives are monotone in capacity and fleet.
+    monotone_resources = config.cvar_weight == 0 and config.unmet_weight >= 0
+    if monotone_resources:
         bundles = _deterministically_non_dominated(
             bundles, hubs, config.budget
         )
