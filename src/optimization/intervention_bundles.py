@@ -1,6 +1,16 @@
-"""Step 10C: constrained intervention bundle optimization."""
+"""Step 10C: constrained intervention bundle optimization.
+
+The bundle search uses a two-stage stochastic screening design:
+1. deterministic dominance pruning for capacity-only intervention catalogs;
+2. a pilot Monte Carlo sample to screen candidates;
+3. full Monte Carlo evaluation (default 500 simulations) for finalists.
+
+This keeps the final risk estimates at the requested simulation count while
+avoiding thousands of unnecessary SCIP solves.
+"""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Sequence
@@ -23,6 +33,8 @@ class BundleConfig:
     max_bundle_size: int = 3
     unmet_weight: float = 1.0
     cvar_weight: float = 0.0
+    pilot_simulations: int = 30
+    final_candidate_limit: int = 75
 
 
 def _q(values, q):
@@ -66,11 +78,160 @@ def _deduplicate_interventions(interventions):
     return list(by_id.values())
 
 
-def evaluate_bundle_candidates(demand, hubs, cost_matrix, fleet,
-                               interventions: Sequence[Intervention],
-                               config: BundleConfig | None = None) -> pd.DataFrame:
+def _bundle_capacity_signature(bundle, hub_ids):
+    """Return effective per-hub capacity uplift for a capacity-only bundle."""
+    multipliers = {hub_id: 1.0 for hub_id in hub_ids}
+    for intervention in bundle:
+        if intervention.capacity_uplift == 0:
+            continue
+        if intervention.target_hub_id is None:
+            for hub_id in multipliers:
+                multipliers[hub_id] *= 1.0 + intervention.capacity_uplift
+        elif intervention.target_hub_id in multipliers:
+            multipliers[intervention.target_hub_id] *= 1.0 + intervention.capacity_uplift
+    return tuple(round(multipliers[hub_id] - 1.0, 12) for hub_id in hub_ids)
+
+
+def _deterministically_non_dominated(bundles, hubs, budget):
+    """Prune bundles that are provably dominated before Monte Carlo.
+
+    This is only applied when every intervention is a capacity intervention.
+    Bundle A is dominated when it costs no more and supplies at least as much
+    effective capacity at every hub, with one strict improvement. Because
+    network service is monotone in available hub capacity, a dominated bundle
+    cannot improve the capacity-only objective used here.
+    """
+    candidates = [
+        b for b in bundles
+        if sum(i.total_cost(1) for i in b) <= budget
+    ]
+    if not candidates:
+        return []
+
+    hub_ids = list(hubs.hub_id)
+    scored = [
+        (bundle, sum(i.total_cost(1) for i in bundle),
+         _bundle_capacity_signature(bundle, hub_ids))
+        for bundle in candidates
+    ]
+
+    keep = []
+    for bundle, cost, signature in scored:
+        dominated = False
+        for other_bundle, other_cost, other_signature in scored:
+            if other_bundle == bundle:
+                continue
+            if (
+                other_cost <= cost
+                and all(a >= b for a, b in zip(other_signature, signature))
+                and (other_cost < cost or other_signature != signature)
+            ):
+                dominated = True
+                break
+        if not dominated:
+            keep.append(bundle)
+    return keep
+
+
+def _pareto_flags(out):
+    efficient = []
+    for i, row in out.iterrows():
+        dominated = (
+            (out["intervention_cost"] <= row["intervention_cost"])
+            & (out["probability_target_met"] >= row["probability_target_met"])
+            & (
+                (out["intervention_cost"] < row["intervention_cost"])
+                | (out["probability_target_met"] > row["probability_target_met"])
+            )
+        )
+        efficient.append(not bool(dominated.any()))
+    return efficient
+
+
+def _evaluate_bundles(demand, hubs, cost_matrix, fleet, bundles, scenarios,
+                      target, progress_label):
+    results = []
+    total = len(bundles)
+    for idx, bundle in enumerate(bundles, start=1):
+        cost = sum(i.total_cost(1) for i in bundle)
+        rows = []
+        for scenario in scenarios:
+            s, h = _apply_bundle(scenario, hubs, bundle)
+            _, metrics = run_scenario(demand, h, fleet, cost_matrix, s)
+            rows.append(metrics)
+
+        summary = _summary(rows, target)
+        results.append({
+            "bundle_id": "baseline" if not bundle else "+".join(i.intervention_id for i in bundle),
+            "intervention_cost": cost,
+            **summary,
+            "objective_value": (
+                cost
+                + summary["expected_unmet_demand"]
+            ),
+            "feasible": summary["probability_target_met"] >= target,
+            "selected_interventions": [i.intervention_id for i in bundle],
+        })
+        if idx == 1 or idx == total or idx % 10 == 0:
+            print(f"{progress_label}: {idx}/{total}", flush=True)
+    return results
+
+
+def _select_final_candidates(pilot, limit):
+    if len(pilot) <= limit:
+        return pilot
+
+    selected = {"baseline"}
+
+    # Protect different notions of promise against pilot noise.
+    ranked = [
+        pilot.sort_values(["objective_value", "intervention_cost"]),
+        pilot.sort_values(["probability_target_met", "service_level_p50"], ascending=[False, False]),
+        pilot.sort_values(["expected_unmet_demand", "intervention_cost"]),
+        pilot.sort_values(["intervention_cost", "probability_target_met"]),
+    ]
+    slice_size = max(1, limit // len(ranked))
+    for frame in ranked:
+        selected.update(frame.head(slice_size)["bundle_id"].tolist())
+
+    # Feasible pilot candidates are retained first.
+    feasible = pilot[pilot["feasible"]].sort_values(
+        ["objective_value", "intervention_cost"]
+    )
+    selected.update(feasible["bundle_id"].tolist())
+
+    if len(selected) > limit:
+        # Keep baseline plus the strongest pilot candidates.
+        chosen = pilot[pilot["bundle_id"].isin(selected)].sort_values(
+            ["feasible", "objective_value", "probability_target_met"],
+            ascending=[False, True, False],
+        )
+        selected = set(chosen.head(limit)["bundle_id"])
+
+    if len(selected) < limit:
+        for bundle_id in pilot.sort_values(
+            ["objective_value", "intervention_cost"]
+        )["bundle_id"]:
+            selected.add(bundle_id)
+            if len(selected) >= limit:
+                break
+
+    return pilot[pilot["bundle_id"].isin(selected)].copy()
+
+
+def evaluate_bundle_candidates(
+    demand, hubs, cost_matrix, fleet,
+    interventions: Sequence[Intervention],
+    config: BundleConfig | None = None,
+) -> pd.DataFrame:
     config = config or BundleConfig()
-    if config.budget < 0 or config.max_bundle_size < 0 or config.n_simulations < 1:
+    if (
+        config.budget < 0
+        or config.max_bundle_size < 0
+        or config.n_simulations < 1
+        or config.pilot_simulations < 1
+        or config.final_candidate_limit < 1
+    ):
         raise ValueError("Invalid bundle configuration.")
     interventions = _deduplicate_interventions(interventions)
 
@@ -89,49 +250,61 @@ def evaluate_bundle_candidates(demand, hubs, cost_matrix, fleet,
     for size in range(1, min(config.max_bundle_size, len(interventions)) + 1):
         bundles.extend(combinations(interventions, size))
 
-    results = []
-    for bundle in bundles:
-        cost = sum(i.total_cost(1) for i in bundle)
-        if cost > config.budget:
-            continue
-
-        rows = []
-        for scenario in scenarios:
-            s, h = _apply_bundle(scenario, hubs, bundle)
-            _, metrics = run_scenario(demand, h, fleet, cost_matrix, s)
-            rows.append(metrics)
-
-        summary = _summary(rows, config.service_target)
-        objective = (
-            cost
-            + config.unmet_weight * summary["expected_unmet_demand"]
-            + config.cvar_weight * summary["transport_cost_cvar95"]
+    # Deterministic dominance is safe only for capacity-only catalogs.
+    capacity_only = all(
+        i.fleet_uplift == 0
+        and i.reserve_vehicle_multiplier == 0
+        and i.capacity_uplift >= 0
+        for i in interventions
+    )
+    if capacity_only:
+        bundles = _deterministically_non_dominated(
+            bundles, hubs, config.budget
         )
-        results.append({
-            "bundle_id": "baseline" if not bundle else "+".join(i.intervention_id for i in bundle),
-            "intervention_cost": cost,
-            **summary,
-            "objective_value": objective,
-            "feasible": summary["probability_target_met"] >= config.required_reliability,
-            "selected_interventions": [i.intervention_id for i in bundle],
-        })
+        print(f"Deterministic bundle pruning retained {len(bundles)} candidates.", flush=True)
+    else:
+        bundles = [
+            b for b in bundles
+            if sum(i.total_cost(1) for i in b) <= config.budget
+        ]
 
-    if not results:
+    if not bundles:
         raise ValueError("No intervention bundle fits the configured budget.")
 
-    out = pd.DataFrame(results)
-    efficient = []
-    for i, row in out.iterrows():
-        dominated = (
-            (out["intervention_cost"] <= row["intervention_cost"])
-            & (out["probability_target_met"] >= row["probability_target_met"])
-            & (
-                (out["intervention_cost"] < row["intervention_cost"])
-                | (out["probability_target_met"] > row["probability_target_met"])
-            )
-        )
-        efficient.append(not bool(dominated.any()))
-    out["pareto_efficient"] = efficient
+    pilot_n = min(config.pilot_simulations, config.n_simulations)
+    pilot_scenarios = scenarios[:pilot_n]
+    pilot_rows = _evaluate_bundles(
+        demand, hubs, cost_matrix, fleet, bundles,
+        pilot_scenarios, config.service_target, "Pilot bundle evaluation"
+    )
+    pilot = pd.DataFrame(pilot_rows)
+
+    final_pilot = _select_final_candidates(
+        pilot, config.final_candidate_limit
+    )
+    final_ids = set(final_pilot["bundle_id"])
+    final_bundles = [
+        b for b in bundles
+        if ("baseline" if not b else "+".join(i.intervention_id for i in b)) in final_ids
+    ]
+
+    print(
+        f"Full Monte Carlo evaluation: {len(final_bundles)} candidates × "
+        f"{config.n_simulations} simulations.",
+        flush=True,
+    )
+    final_rows = _evaluate_bundles(
+        demand, hubs, cost_matrix, fleet, final_bundles,
+        scenarios, config.service_target, "Full bundle evaluation"
+    )
+
+    out = pd.DataFrame(final_rows)
+    out["pareto_efficient"] = _pareto_flags(out)
+    out["pilot_candidates"] = len(bundles)
+    out["final_candidates"] = len(final_bundles)
+    out["pilot_simulations"] = pilot_n
+    out["full_simulations"] = config.n_simulations
+
     return out.sort_values(
         ["feasible", "objective_value", "intervention_cost"],
         ascending=[False, True, True],
