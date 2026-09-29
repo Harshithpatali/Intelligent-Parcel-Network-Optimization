@@ -105,13 +105,13 @@ def evaluate_interventions(
     base_simulation_config = base_simulation_config or SimulationConfig(
         n_simulations=config.n_simulations,
         seed=config.seed,
-        service_target=config.service_target,
+        service_level_target=config.service_target,
     )
 
     rng = np.random.default_rng(config.seed)
     scenarios = [
         generate_random_scenario(
-            rng, demand, hubs, cost_matrix, base_simulation_config
+            hubs, cost_matrix, rng, i, base_simulation_config
         )
         for _ in range(config.n_simulations)
     ]
@@ -120,15 +120,15 @@ def evaluate_interventions(
     intervention_rows = {i.intervention_id: [] for i in interventions}
 
     for scenario in scenarios:
-        baseline_rows.append(run_scenario(scenario, demand, hubs, cost_matrix, fleet))
+        baseline_rows.append(run_scenario(demand, hubs, fleet, cost_matrix, scenario)[1])
         for intervention in interventions:
             modified_scenario, modified_hubs = _apply_intervention(
                 scenario, hubs, intervention
             )
             intervention_rows[intervention.intervention_id].append(
                 run_scenario(
-                    modified_scenario, demand, modified_hubs, cost_matrix, fleet
-                )
+                    demand, modified_hubs, fleet, cost_matrix, modified_scenario
+                )[1]
             )
 
     baseline = _summary(
