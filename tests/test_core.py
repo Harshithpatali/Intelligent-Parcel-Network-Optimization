@@ -50,9 +50,9 @@ def test_bundle_optimizer_reproducible():
     cost = build_cost_matrix(hubs)
     interventions = [
         Intervention("h1", "targeted_hub_capacity", variable_cost=1.0,
-                     capacity_uplift=.10, target_hub_id=int(hubs.iloc[0].hub_id)),
+                     capacity_uplift=.10, target_hub_id=hubs.iloc[0].hub_id),
         Intervention("h2", "targeted_hub_capacity", variable_cost=2.0,
-                     capacity_uplift=.20, target_hub_id=int(hubs.iloc[1].hub_id)),
+                     capacity_uplift=.20, target_hub_id=hubs.iloc[1].hub_id),
     ]
     cfg = BundleConfig(n_simulations=2, seed=7, budget=10, max_bundle_size=2)
     a = evaluate_bundle_candidates(d, hubs, cost, fleet, interventions, cfg)
@@ -64,6 +64,7 @@ def test_bundle_optimizer_reproducible():
 
 def test_unavailable_route_is_counted_as_unmet():
     import pandas as pd
+    import pytest
     from src.optimization.network import solve_network
     demand = pd.DataFrame([
         {"origin_hub": 1, "destination_hub": 2, "parcel_count": 10},
@@ -85,4 +86,4 @@ def test_unavailable_route_is_counted_as_unmet():
     _, metrics = solve_network(demand, hubs, cost=cost, fleet=fleet)
     assert metrics["total_parcels"] == 10
     assert metrics["unmet_demand"] == 20
-    assert metrics["service_level"] == 10 / 30
+    assert metrics["service_level"] == pytest.approx(10 / 30)
