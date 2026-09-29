@@ -22,6 +22,25 @@ def analyze_simulations(results:pd.DataFrame,run_id:str|None=None):
  effects=(out[out.analysis_type.eq("grouped_factor")].groupby("factor",as_index=False)["contribution_score"].mean().sort_values("contribution_score",ascending=False))
  return out,{"run_id":run_id,"simulations":int(len(df)),"mean_service_level":baseline,"factor_effects":effects.to_dict("records")}
 def hub_pressure_table(demand:pd.DataFrame,hubs:pd.DataFrame):
- d=demand.copy(); d["demand"]=pd.to_numeric(d["demand"],errors="coerce").fillna(0)
- out=d.groupby("origin_hub",as_index=False).demand.sum().rename(columns={"origin_hub":"hub_id","demand":"outbound_demand"}); inn=d.groupby("destination_hub",as_index=False).demand.sum().rename(columns={"destination_hub":"hub_id","demand":"inbound_demand"})
- out=out.merge(inn,on="hub_id",how="outer").fillna(0).merge(hubs[["hub_id","capacity_parcels"]],on="hub_id",how="left"); out["throughput_demand"]=out.outbound_demand+out.inbound_demand; out["capacity_pressure"]=out.throughput_demand/(2*out.capacity_parcels.clip(lower=1)); return out.sort_values("capacity_pressure",ascending=False)
+    d=demand.copy()
+    demand_column="demand" if "demand" in d.columns else "parcel_count"
+    if demand_column not in d.columns:
+        raise ValueError("Demand frame must contain either 'demand' or 'parcel_count'.")
+    required_hub_columns={"hub_id","capacity_parcels"}
+    missing=required_hub_columns-set(hubs.columns)
+    if missing:
+        raise ValueError(f"Hub frame is missing required columns: {sorted(missing)}")
+    d["demand"]=pd.to_numeric(d[demand_column],errors="coerce").fillna(0).clip(lower=0)
+    out=d.groupby("origin_hub",as_index=False).demand.sum().rename(columns={"origin_hub":"hub_id","demand":"outbound_demand"})
+    inn=d.groupby("destination_hub",as_index=False).demand.sum().rename(columns={"destination_hub":"hub_id","demand":"inbound_demand"})
+    out=out.merge(inn,on="hub_id",how="outer").fillna(0)
+    out=out.merge(hubs[["hub_id","capacity_parcels"]],on="hub_id",how="left")
+    if out["capacity_parcels"].isna().any():
+        missing_hubs=out.loc[out["capacity_parcels"].isna(),"hub_id"].tolist()
+        raise ValueError(f"Missing calibrated capacity for hubs: {missing_hubs}")
+    out["capacity_parcels"]=pd.to_numeric(out["capacity_parcels"],errors="coerce")
+    if (out["capacity_parcels"]<=0).any() or out["capacity_parcels"].isna().any():
+        raise ValueError("Hub capacities must be positive finite values.")
+    out["throughput_demand"]=out.outbound_demand+out.inbound_demand
+    out["capacity_pressure"]=out.throughput_demand/(2*out.capacity_parcels)
+    return out.sort_values("capacity_pressure",ascending=False)
