@@ -20,8 +20,11 @@ class TargetedInterventionConfig:
 
 
 def rank_hubs(demand: pd.DataFrame, hubs: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
-    outbound = demand.groupby("origin_hub")["demand"].sum().rename("outbound_demand")
-    inbound = demand.groupby("destination_hub")["demand"].sum().rename("inbound_demand")
+    demand_column = "parcel_count" if "parcel_count" in demand.columns else "demand"
+    if demand_column not in demand.columns:
+        raise ValueError("Demand frame must contain either 'parcel_count' or 'demand'.")
+    outbound = demand.groupby("origin_hub")[demand_column].sum().rename("outbound_demand")
+    inbound = demand.groupby("destination_hub")[demand_column].sum().rename("inbound_demand")
 
     ranked = hubs[["hub_id", "capacity_parcels"]].copy()
     ranked = ranked.join(outbound, on="hub_id").join(inbound, on="hub_id").fillna(0)
