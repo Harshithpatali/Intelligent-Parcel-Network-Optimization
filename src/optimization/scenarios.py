@@ -39,7 +39,7 @@ def apply_scenario(demand, hubs, fleet, cost, scenario: Scenario):
     if scenario.disabled_routes:
         disabled_routes = set(scenario.disabled_routes)
         mask = c.apply(
-            lambda r: (int(r.origin_hub), int(r.destination_hub))
+            lambda r: (r.origin_hub, r.destination_hub)
             in disabled_routes,
             axis=1,
         )
