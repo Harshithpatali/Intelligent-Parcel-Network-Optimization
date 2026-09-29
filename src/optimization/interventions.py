@@ -113,7 +113,7 @@ def evaluate_interventions(
         generate_random_scenario(
             hubs, cost_matrix, rng, i, base_simulation_config
         )
-        for _ in range(config.n_simulations)
+        for i in range(config.n_simulations)
     ]
 
     baseline_rows = []
