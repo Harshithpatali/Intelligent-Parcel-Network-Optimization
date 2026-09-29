@@ -38,6 +38,7 @@ env:
   OSRM_URL: https://router.project-osrm.org
   OSRM_PROFILE: driving
   PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}
 
 jobs:
   prepare:
