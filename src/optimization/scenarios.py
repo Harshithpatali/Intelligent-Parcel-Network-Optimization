@@ -11,8 +11,8 @@ class Scenario:
     demand_multiplier: float = 1.0
     capacity_multiplier: float = 1.0
     fleet_multiplier: float = 1.0
-    disabled_hubs: tuple[int, ...] = field(default_factory=tuple)
-    disabled_routes: tuple[tuple[int, int], ...] = field(default_factory=tuple)
+    disabled_hubs: tuple = field(default_factory=tuple)
+    disabled_routes: tuple[tuple, ...] = field(default_factory=tuple)
 
 
 def apply_scenario(demand, hubs, fleet, cost, scenario: Scenario):
@@ -77,7 +77,7 @@ def run_scenario(demand, hubs, fleet, cost, scenario: Scenario):
 
 
 def standard_scenarios(hubs: pd.DataFrame, cost: pd.DataFrame) -> list[Scenario]:
-    hub_ids = sorted(hubs.hub_id.astype(int).tolist())
+    hub_ids = sorted(hubs.hub_id.tolist(), key=str)
     if not hub_ids:
         return []
 
@@ -88,8 +88,8 @@ def standard_scenarios(hubs: pd.DataFrame, cost: pd.DataFrame) -> list[Scenario]
         (cost.origin_hub == outage_hub) | (cost.destination_hub == outage_hub)
     ].sort_values("distance_km")
     route = (
-        int(routes.iloc[0].origin_hub),
-        int(routes.iloc[0].destination_hub),
+        routes.iloc[0].origin_hub,
+        routes.iloc[0].destination_hub,
     ) if not routes.empty else None
 
     scenarios = [
