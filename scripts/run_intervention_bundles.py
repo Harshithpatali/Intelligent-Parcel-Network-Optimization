@@ -79,7 +79,7 @@ def main():
         capacity[["hub_id", "capacity_parcels"]],
         on="hub_id",
         how="left",
-    ).rename(columns={"capacity_parcels": "capacity_parcels"})
+    )
 
     fleet = fetch_all(sb, "logistics_fleet")
     road = fetch_all(sb, "logistics_road_matrix")
