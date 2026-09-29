@@ -1,0 +1,148 @@
+name: Production Analytics Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      forecast_date:
+        description: "Forecast date to optimize (YYYY-MM-DD)"
+        required: true
+        default: "2018-09-03"
+      model_version:
+        description: "Forecast model version"
+        required: true
+        default: "hub-od-xgb-v1"
+      simulations:
+        description: "Monte Carlo simulations"
+        required: true
+        default: "500"
+      budget:
+        description: "Intervention bundle budget"
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-analytics-pipeline
+  cancel-in-progress: false
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  MODEL_VERSION: ${{ inputs.model_version }}
+  FORECAST_DATE: ${{ inputs.forecast_date }}
+  OSRM_URL: https://router.project-osrm.org
+  OSRM_PROFILE: driving
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  prepare:
+    name: Build road matrix + forecast
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Build OSRM road matrix
+        run: python scripts/build_osrm_matrix.py
+      - name: Train and persist demand forecast
+        run: python scripts/train_hub_od_forecaster.py
+      - name: Validate production prerequisites
+        run: python scripts/pre_deploy_check.py
+      - name: Upload forecast artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecast-artifacts
+          path: |
+            artifacts/hub_od_forecast/
+          if-no-files-found: warn
+
+  optimize:
+    name: Network optimization + disruptions
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Forecast optimization
+        run: |
+          python scripts/run_forecast_optimization.py \
+            --forecast-date "$FORECAST_DATE" \
+            --model-version "$MODEL_VERSION"
+      - name: Disruption scenarios
+        run: |
+          python scripts/run_disruption_scenarios.py \
+            --forecast-date "$FORECAST_DATE" \
+            --model-version "$MODEL_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optimization-results
+          path: data/artifacts/
+          if-no-files-found: warn
+
+  resilience:
+    name: Resilience analytics
+    needs: optimize
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Deterministic resilience frontier
+        run: |
+          python scripts/run_resilience_frontier.py \
+            --forecast-date "$FORECAST_DATE" \
+            --model-version "$MODEL_VERSION"
+      - name: Probabilistic resilience
+        run: |
+          python scripts/run_probabilistic_resilience.py \
+            --forecast-date "$FORECAST_DATE" \
+            --model-version "$MODEL_VERSION" \
+            --n-simulations "${{ inputs.simulations }}"
+      - name: Targeted hub interventions
+        run: |
+          python scripts/run_targeted_hub_interventions.py \
+            --forecast-date "$FORECAST_DATE" \
+            --model-version "$MODEL_VERSION" \
+            --n-simulations "${{ inputs.simulations }}"
+      - name: Intervention bundles
+        run: |
+          python scripts/run_intervention_bundles.py \
+            --forecast-date "$FORECAST_DATE" \
+            --model-version "$MODEL_VERSION" \
+            --n-simulations "${{ inputs.simulations }}" \
+            --budget "${{ inputs.budget }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resilience-results
+          path: data/artifacts/
+          if-no-files-found: warn
+
+  gate:
+    name: Final production gate
+    needs: resilience
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Verify production data
+        run: python scripts/pre_deploy_check.py
