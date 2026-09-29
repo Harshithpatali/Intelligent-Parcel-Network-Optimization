@@ -44,7 +44,7 @@ def optimize(req:OptimizeRequest):
  except Exception as e: OPTIMIZATION_RUNS.labels('error').inc(); logger.exception('optimization_failed'); raise HTTPException(400,str(e))
 @app.post('/scenario')
 def scenario(req:ScenarioRequest):
- scenarios={'demand_surge':Scenario('demand_surge',1.30,1.0),'hub_outage':Scenario('hub_outage',1.0,.60),'combined':Scenario('combined',1.30,.70)}
+ scenarios={'demand_surge':Scenario('demand_surge','demand_surge',demand_multiplier=1.30),'hub_outage':Scenario('hub_outage','hub_outage',capacity_multiplier=.60),'combined':Scenario('combined','combined',demand_multiplier=1.30,capacity_multiplier=.70)}
  try:
   d=demand.tail(7*len(hubs)*(len(hubs)-1)).groupby(['origin_hub','destination_hub'],as_index=False).parcel_count.sum(); flows,m=run_scenario(d,hubs,scenarios[req.scenario]); UNMET_PARCELS.set(m['unmet_demand']); OPTIMIZATION_RUNS.labels(m['status']).inc(); return {'metrics':m,'flows':flows.to_dict(orient='records')}
  except Exception as e: OPTIMIZATION_RUNS.labels('error').inc(); logger.exception('scenario_failed'); raise HTTPException(400,str(e))
