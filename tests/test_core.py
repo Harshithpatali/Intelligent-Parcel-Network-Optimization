@@ -118,3 +118,27 @@ def test_hub_pressure_accepts_capacity_enriched_hubs():
     out = hub_pressure_table(demand, hubs)
     assert len(out) == 2
     assert "capacity_pressure" in out.columns
+
+
+def test_same_hub_demand_is_not_counted_as_network_unmet():
+    demand = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 1, "parcel_count": 15},
+        {"origin_hub": 1, "destination_hub": 2, "parcel_count": 10},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": 1, "capacity_parcels": 100},
+        {"hub_id": 2, "capacity_parcels": 100},
+    ])
+    fleet = pd.DataFrame([{
+        "vehicle_type": "default", "vehicle_count": 10, "parcel_capacity": 20,
+        "operating_hours_per_day": 12.0, "fixed_trip_cost": 1.0,
+        "cost_per_km": 0.01, "max_trip_hours": 12.0
+    }])
+    cost = pd.DataFrame([{
+        "origin_hub": 1, "destination_hub": 2, "distance_km": 10.0,
+        "unit_cost": 1.0, "travel_time_hours": 1.0
+    }])
+    _, metrics = solve_network(demand, hubs, cost=cost, fleet=fleet)
+    assert metrics["total_parcels"] == pytest.approx(25.0)
+    assert metrics["unmet_demand"] == pytest.approx(0.0)
+    assert metrics["local_parcels_assumed_served"] == pytest.approx(15.0)
