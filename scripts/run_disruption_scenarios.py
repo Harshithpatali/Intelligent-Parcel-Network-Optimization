@@ -4,6 +4,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client
@@ -155,6 +156,7 @@ def main():
                 "incremental_cost": row.get("incremental_cost"),
                 "incremental_unmet_demand": row.get("incremental_unmet_demand"),
             }
+            payload = {k: (None if pd.isna(v) or (isinstance(v, (float, np.floating)) and not np.isfinite(v)) else v) for k, v in payload.items()}
             client.table("logistics_scenario_results").insert(payload).execute()
 
         if flow_rows:
@@ -165,8 +167,12 @@ def main():
                 "parcels", "unmet_parcels", "trips", "distance_km",
                 "travel_time_hours", "transport_cost",
             ]
+            flow_df = all_flows[cols].replace([np.inf, -np.inf], np.nan).copy()
+            for id_col in ("origin_hub", "destination_hub", "trips"):
+                flow_df[id_col] = pd.to_numeric(flow_df[id_col], errors="coerce").round().astype("Int64")
+            flow_df = flow_df.astype(object).where(pd.notna(flow_df), None)
             client.table("logistics_scenario_flows").insert(
-                all_flows[cols].where(pd.notna(all_flows[cols]), None).to_dict("records")
+                flow_df.to_dict("records")
             ).execute()
 
     print(result_df[[
