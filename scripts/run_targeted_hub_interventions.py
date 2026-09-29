@@ -68,6 +68,7 @@ def main():
             "xgb_pred": "parcel_count",
         }
     )[["origin_hub", "destination_hub", "parcel_count"]]
+    demand["demand"] = demand["parcel_count"]
 
     hubs = fetch_all(sb, "logistics_hubs")
     capacity = fetch_all(sb, "logistics_hub_capacity")
