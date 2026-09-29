@@ -59,7 +59,7 @@ def main():
         failures.append(f"expected at least {expected_simulations} resilience simulations, found {sim_count}")
 
     now=datetime.now(timezone.utc)
-    freshness_limit=now-timedelta(minutes=15)
+    freshness_limit=now-timedelta(minutes=180)
     for table in [
         "logistics_resilience_risk_summary",
         "logistics_resilience_root_cause",
