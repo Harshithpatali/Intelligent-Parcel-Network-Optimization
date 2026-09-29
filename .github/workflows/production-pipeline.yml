@@ -117,6 +117,9 @@ jobs:
             --forecast-date "$FORECAST_DATE" \
             --model-version "$MODEL_VERSION" \
             --n-simulations "${{ inputs.simulations || '500' }}"
+      - name: Root-cause decomposition
+        run: |
+          python scripts/run_root_cause_analysis.py
       - name: Targeted hub interventions
         run: |
           python scripts/run_targeted_hub_interventions.py \
