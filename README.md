@@ -44,3 +44,39 @@ Olist does not contain a real carrier hub/fleet network. The project therefore c
 
 ## Production roadmap
 Complete RBAC/SSO, private networking, secrets management, real routing data, asynchronous optimization jobs, audit persistence, drift monitoring, load testing, disaster recovery, and stakeholder-calibrated cost/capacity constraints before live operational use.
+
+
+## Pre-deployment gate
+
+Before deploying the research application, populate the real road matrix and forecast predictions, then run:
+
+```bash
+python scripts/pre_deploy_check.py
+```
+
+Optional date-specific validation:
+
+```bash
+FORECAST_DATE=2018-09-03 MODEL_VERSION=hub-od-xgb-v1 python scripts/pre_deploy_check.py
+```
+
+The gate verifies candidate hubs, road-network pairs, forecast predictions, calibrated hub capacity, and fleet configuration. It intentionally blocks deployment when those production artifacts are missing.
+
+## Resilience decision layer
+
+The project now extends beyond deterministic network allocation:
+
+1. disruption-aware optimization
+2. deterministic resilience frontier
+3. probabilistic Monte Carlo resilience
+4. broad intervention optimization
+5. targeted hub intervention optimization
+6. budget-constrained intervention bundles
+
+Intervention costs and disruption distributions are explicitly synthetic stress-test assumptions unless calibrated with operational data.
+
+## Deployment boundary
+
+The FastAPI + Streamlit container is deployment-ready as a research application. The deployed API uses demo data unless the production data-serving layer is explicitly wired to the populated Supabase artifacts. Do not represent demo outputs as live carrier operations.
+
+For the final deployment, run the pre-deployment gate, populate the OSRM matrix from an outbound-HTTPS runner, execute the forecast training pipeline, validate the resulting metrics, and then deploy the container.
