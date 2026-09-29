@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_URL: https://njljkgmxjhvbnevbegoc.supabase.co
   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
   MODEL_VERSION: ${{ inputs.model_version || 'hub-od-xgb-v1' }}
   FORECAST_DATE: ${{ inputs.forecast_date || '2018-09-03' }}
