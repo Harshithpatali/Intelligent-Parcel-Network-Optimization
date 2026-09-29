@@ -53,7 +53,7 @@ def build_targeted_interventions(
     candidates: list[Intervention] = []
 
     for row in ranked.itertuples(index=False):
-        hub = int(row.hub_id)
+        hub = row.hub_id
         for uplift in config.capacity_steps:
             pct = int(round(uplift * 100))
             candidates.append(
