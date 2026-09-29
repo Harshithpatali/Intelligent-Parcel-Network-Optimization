@@ -36,8 +36,8 @@ The rolling windows explicitly end at t-1.
 
 The final 28 calendar days are held out chronologically:
 
-- Train: **177,672 rows**
-- Test: **7,656 rows**
+- Train: **177,936 rows**
+- Test: **7,392 rows**
 - Test period: **2018-08-07 through 2018-09-03**
 
 The primary baseline is the 7-day seasonal naive forecast: prediction(t) = demand(t-7).
