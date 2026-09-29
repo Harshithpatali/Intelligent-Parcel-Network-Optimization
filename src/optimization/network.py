@@ -17,8 +17,8 @@ def build_cost_matrix(hubs):
                 continue
             km = haversine_km(a.lat, a.lon, b.lat, b.lon) * 1.18
             rows.append({
-                "origin_hub": int(a.hub_id),
-                "destination_hub": int(b.hub_id),
+                "origin_hub": a.hub_id,
+                "destination_hub": b.hub_id,
                 "distance_km": km,
                 "unit_cost": 2.2 + 0.075 * km,
                 "travel_time_hours": km / 60.0,
