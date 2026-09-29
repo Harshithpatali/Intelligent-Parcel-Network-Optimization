@@ -86,14 +86,14 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     if not solver:
         raise RuntimeError("OR-Tools SCIP solver unavailable")
 
-    # Only retain routes present in the supplied matrix and allowed by vehicle range.
-    routes = []
-    for _, r in d.iterrows():
-        k = (int(r.origin_hub), int(r.destination_hub))
-        if k in route:
-            routes.append((k, float(r.parcel_count)))
+    # Keep every demand route. If a route is absent because of a hub/road
+    # disruption, its demand must remain in the denominator and become unmet.
+    routes = [
+        ((int(r.origin_hub), int(r.destination_hub)), float(r.parcel_count))
+        for _, r in d.iterrows()
+    ]
     if not routes:
-        raise ValueError("No demand routes overlap the supplied cost matrix")
+        raise ValueError("Demand contains no OD routes")
 
     x = {}  # parcels by route and vehicle type
     y = {}  # integer trips by route and vehicle type
@@ -102,6 +102,9 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     for (o, j), q in routes:
         u[(o, j)] = solver.NumVar(0, solver.infinity(), f"unmet_{o}_{j}")
         route_vars = []
+        if (o, j) not in route:
+            solver.Add(u[(o, j)] >= q)
+            continue
         for fi, fr in fleet.iterrows():
             vt = str(fr.vehicle_type)
             t = route[(o, j)]["travel_time_hours"]
