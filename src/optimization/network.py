@@ -15,7 +15,7 @@ def build_cost_matrix(hubs):
         for _, b in hubs.iterrows():
             if a.hub_id == b.hub_id:
                 continue
-            km = haversine_km(a.lat, a.lng, b.lat, b.lng) * 1.18
+            km = haversine_km(a.lat, a.lon, b.lat, b.lon) * 1.18
             rows.append({
                 "origin_hub": int(a.hub_id),
                 "destination_hub": int(b.hub_id),
