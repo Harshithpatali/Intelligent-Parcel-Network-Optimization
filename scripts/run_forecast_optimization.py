@@ -123,8 +123,11 @@ def main():
             "trips", "distance_km", "travel_time_hours", "transport_cost",
             "model_version",
         ]
-        persist_df = flows[persist_cols].replace([np.inf, -np.inf], np.nan).astype(object)
-        persist_df = persist_df.where(pd.notna(persist_df), None)
+        persist_df = flows[persist_cols].replace([np.inf, -np.inf], np.nan).copy()
+        for id_col in ("origin_hub", "destination_hub"):
+            persist_df[id_col] = pd.to_numeric(persist_df[id_col], errors="coerce").round().astype("Int64")
+        persist_df["trips"] = pd.to_numeric(persist_df["trips"], errors="coerce").round().astype("Int64")
+        persist_df = persist_df.astype(object).where(pd.notna(persist_df), None)
         client.table("logistics_optimized_flows").insert(
             persist_df.to_dict("records")
         ).execute()
