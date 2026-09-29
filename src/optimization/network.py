@@ -177,7 +177,6 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
                 continue
             rc = route[(o, j)]
             trip_cost = float(fr.fixed_trip_cost) + float(fr.cost_per_km) * rc["distance_km"]
-            unmet_written = True
             rows.append({
                 "origin_hub": o,
                 "destination_hub": j,
@@ -189,6 +188,21 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
                 "distance_km": rc["distance_km"],
                 "travel_time_hours": rc["travel_time_hours"],
                 "transport_cost": trips * trip_cost,
+            })
+            unmet_written = True
+
+        if not unmet_written and route_unmet > 0:
+            rows.append({
+                "origin_hub": o,
+                "destination_hub": j,
+                "vehicle_type": None,
+                "requested_parcels": requested,
+                "parcels": 0.0,
+                "unmet_parcels": route_unmet,
+                "trips": 0,
+                "distance_km": route[(o, j)]["distance_km"],
+                "travel_time_hours": route[(o, j)]["travel_time_hours"],
+                "transport_cost": 0.0,
             })
 
     out = pd.DataFrame(rows)
