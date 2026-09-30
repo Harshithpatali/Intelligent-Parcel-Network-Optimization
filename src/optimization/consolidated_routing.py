@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 import itertools
+import math
+from typing import Any
+
 import pandas as pd
 
 
@@ -21,19 +23,37 @@ class ConsolidatedRouteConfig:
     economic_weight: float = 0.2
     service_time_minutes_per_stop: float = 15.0
 
+    # Real-world physical constraints.
+    max_weight_kg: float = 12000.0
+    max_volume_m3: float = 65.0
+    loading_minutes: float = 30.0
+    unloading_minutes_per_parcel: float = 0.5
+    driver_break_hours: float = 0.5
+    return_to_origin: bool = False
+    empty_return_factor: float = 0.35
+    max_detour_pct: float = 25.0
+    max_time_detour_pct: float = 25.0
+    min_capacity_utilization: float = 0.60
 
-def _route_lookup(cost: pd.DataFrame) -> dict[tuple[object, object], dict[str, float]]:
-    required = {
-        "origin_hub",
-        "destination_hub",
-        "distance_km",
-        "travel_time_hours",
-    }
+    # Operational control rules.
+    origin_cutoff_hour: float = 18.0
+    stop_cutoff_hour: float = 23.0
+    staging_buffer_hours: float = 0.5
+
+
+def _hub_key(value: Any) -> str:
+    if pd.isna(value):
+        return "<NA>"
+    return str(value).strip()
+
+
+def _route_lookup(cost: pd.DataFrame) -> dict[tuple[str, str], dict[str, float]]:
+    required = {"origin_hub", "destination_hub", "distance_km", "travel_time_hours"}
     missing = required - set(cost.columns)
     if missing:
         raise ValueError(f"Cost matrix missing columns: {sorted(missing)}")
 
-    lookup: dict[tuple[object, object], dict[str, float]] = {}
+    lookup: dict[tuple[str, str], dict[str, float]] = {}
     for row in cost.itertuples(index=False):
         lookup[(_hub_key(row.origin_hub), _hub_key(row.destination_hub))] = {
             "distance_km": float(row.distance_km),
@@ -52,115 +72,101 @@ def _chunks(quantity: float, capacity: int) -> list[float]:
     return out
 
 
-def _hub_key(value):
-    if pd.isna(value):
-        return "<NA>"
-    return str(value).strip()
-
-
 def _travel(lookup, origin, destination):
     return lookup.get((_hub_key(origin), _hub_key(destination)))
 
 
+def _parcel_profile(
+    demand: pd.DataFrame,
+    origin: Any,
+    destination: Any,
+    quantity: float,
+) -> dict[str, float]:
+    """Return physically meaningful load estimates for an OD movement.
 
-def _route_metrics(origin, stops, lookup):
-    distance = 0.0
-    hours = 0.0
-    current = origin
-    for destination in stops:
-        leg = _travel(lookup, current, destination)
-        if leg is None:
-            return None
-        distance += leg["distance_km"]
-        hours += leg["travel_time_hours"]
-        current = destination
-    return distance, hours
-
-
-def _improve_stop_order(origin, stops, lookup):
+    The aggregate routing API accepts demand at OD level, so parcel dimensions
+    are estimated from observed parcel-level fields when available. When they
+    are not present, conservative planning averages are used.
     """
-    Improve the stop sequence using pairwise 2-opt-style reversals.
+    subset = demand[
+        demand["origin_hub"].map(_hub_key).eq(_hub_key(origin))
+        & demand["destination_hub"].map(_hub_key).eq(_hub_key(destination))
+    ]
 
-    A candidate sequence is accepted only when it is no worse on both
-    distance and travel time and strictly better on at least one. This
-    prevents a route such as A->B->C from surviving when A->C->B is
-    simultaneously shorter and faster.
-    """
-    sequence = list(stops)
-    current = _route_metrics(origin, sequence, lookup)
-    if current is None or len(sequence) < 2:
-        return sequence, current
+    if "weight_kg" in subset.columns and len(subset):
+        avg_weight = float(pd.to_numeric(subset["weight_kg"], errors="coerce").mean())
+        avg_weight = avg_weight if math.isfinite(avg_weight) and avg_weight > 0 else 2.5
+    else:
+        avg_weight = 2.5
 
-    changed = True
-    while changed:
-        changed = False
-        best_sequence = sequence
-        best_metrics = current
+    if "volume_m3" in subset.columns and len(subset):
+        avg_volume = float(pd.to_numeric(subset["volume_m3"], errors="coerce").mean())
+        avg_volume = avg_volume if math.isfinite(avg_volume) and avg_volume > 0 else 0.012
+    else:
+        avg_volume = 0.012
 
-        for i in range(len(sequence) - 1):
-            for j in range(i + 1, len(sequence)):
-                candidate = sequence[:i] + list(reversed(sequence[i:j + 1])) + sequence[j + 1:]
-                metrics = _route_metrics(origin, candidate, lookup)
-                if metrics is None:
-                    continue
-                d, t = metrics
-                bd, bt = best_metrics
-                if d <= bd + 1e-9 and t <= bt + 1e-9 and (d < bd - 1e-9 or t < bt - 1e-9):
-                    best_sequence = candidate
-                    best_metrics = metrics
+    return {
+        "weight_kg": float(quantity) * avg_weight,
+        "volume_m3": float(quantity) * avg_volume,
+        "avg_weight_kg": avg_weight,
+        "avg_volume_m3": avg_volume,
+    }
 
-        if best_sequence != sequence:
-            sequence = best_sequence
-            current = best_metrics
-            changed = True
 
-    return sequence, current
-
-def _sequence_metrics(origin, sequence, lookup):
-    distance = 0.0
-    hours = 0.0
+def _sequence_metrics(origin, sequence, lookup, config: ConsolidatedRouteConfig):
+    drive_distance = 0.0
+    drive_hours = 0.0
     current = origin
     for destination in sequence:
         leg = _travel(lookup, current, destination)
         if leg is None:
             return None
-        distance += leg["distance_km"]
-        hours += leg["travel_time_hours"]
+        drive_distance += leg["distance_km"]
+        drive_hours += leg["travel_time_hours"]
         current = destination
-    return distance, hours
+
+    service_hours = (
+        config.loading_minutes / 60.0
+        + len(sequence) * config.service_time_minutes_per_stop / 60.0
+    )
+    return drive_distance, drive_hours, drive_hours + service_hours
 
 
-
-def _direct_baseline(origin, stops, lookup):
-    """Independent origin-to-destination distance/time baseline."""
+def _direct_baseline(origin, stops, lookup, config: ConsolidatedRouteConfig):
     distance = 0.0
-    hours = 0.0
+    drive_time = 0.0
     for destination in stops:
         leg = _travel(lookup, origin, destination)
         if leg is None:
             return None
         distance += leg["distance_km"]
-        hours += leg["travel_time_hours"]
-    return distance, hours
+        drive_time += leg["travel_time_hours"]
+
+    # Each direct dispatch includes its own loading cycle and stop handling.
+    service_hours = len(stops) * (
+        config.loading_minutes / 60.0 + config.service_time_minutes_per_stop / 60.0
+    )
+    return distance, drive_time, drive_time + service_hours
 
 
-def _detour_evaluation(origin, sequence, lookup, config):
-    """Evaluate route distance, time, and economic efficiency."""
-    route = _sequence_metrics(origin, sequence, lookup)
-    baseline = _direct_baseline(origin, sequence, lookup)
+def _detour_evaluation(origin, sequence, lookup, config: ConsolidatedRouteConfig):
+    route = _sequence_metrics(origin, sequence, lookup, config)
+    baseline = _direct_baseline(origin, sequence, lookup, config)
     if route is None or baseline is None:
         return None
-    route_distance, route_drive_time = route
-    base_distance, base_drive_time = baseline
-    route_time = route_drive_time + (config.service_time_minutes_per_stop / 60.0) * len(sequence)
-    base_time = base_drive_time + (config.service_time_minutes_per_stop / 60.0) * len(sequence)
+
+    route_distance, route_drive_time, route_time = route
+    base_distance, base_drive_time, base_time = baseline
+
     distance_ratio = route_distance / max(base_distance, 1e-9)
     time_ratio = route_time / max(base_time, 1e-9)
-    direct_cost = len(sequence) * config.fixed_trip_cost + config.cost_per_km * base_distance
+
+    direct_cost = (
+        len(sequence) * config.fixed_trip_cost
+        + config.cost_per_km * base_distance
+    )
     route_cost = config.fixed_trip_cost + config.cost_per_km * route_distance
-    economic_ratio = route_cost / max(direct_cost, 1e-9)
-    savings = direct_cost - route_cost
-    score = (config.distance_weight * distance_ratio + config.time_weight * time_ratio + config.economic_weight * economic_ratio)
+
     return {
         "distance_km": route_distance,
         "travel_time_hours": route_time,
@@ -169,153 +175,258 @@ def _detour_evaluation(origin, sequence, lookup, config):
         "baseline_time_hours": base_time,
         "distance_ratio": distance_ratio,
         "time_ratio": time_ratio,
-        "economic_ratio": economic_ratio,
         "direct_dispatch_cost": direct_cost,
         "transport_cost": route_cost,
-        "estimated_savings": savings,
-        "estimated_savings_pct": 100.0 * savings / max(direct_cost, 1e-9),
+        "estimated_savings": direct_cost - route_cost,
+        "estimated_savings_pct": 100.0 * (direct_cost - route_cost) / max(direct_cost, 1e-9),
         "distance_detour_pct": (distance_ratio - 1.0) * 100.0,
         "time_detour_pct": (time_ratio - 1.0) * 100.0,
-        "detour_score": score,
+        "detour_score": (
+            config.distance_weight * distance_ratio
+            + config.time_weight * time_ratio
+            + config.economic_weight * route_cost / max(direct_cost, 1e-9)
+        ),
     }
 
-def _best_stop_sequence(origin, stops, lookup, config):
-    """Choose a feasible sequence using distance, time, and economics."""
+
+def _best_stop_sequence(origin, stops, lookup, config: ConsolidatedRouteConfig):
     best = None
     for sequence in itertools.permutations(stops):
         evaluation = _detour_evaluation(origin, sequence, lookup, config)
-        if evaluation is None or evaluation["travel_time_hours"] > config.max_route_hours + 1e-9:
+        if evaluation is None:
             continue
-        candidate = (evaluation["detour_score"], evaluation["economic_ratio"], evaluation["distance_km"], evaluation["travel_time_hours"], tuple(str(x) for x in sequence), sequence, evaluation)
+
+        if evaluation["distance_detour_pct"] > config.max_detour_pct + 1e-9:
+            continue
+        if evaluation["time_detour_pct"] > config.max_time_detour_pct + 1e-9:
+            continue
+
+        candidate = (
+            evaluation["detour_score"],
+            evaluation["economic_ratio"],
+            evaluation["distance_km"],
+            evaluation["travel_time_hours"],
+            tuple(str(x) for x in sequence),
+            sequence,
+            evaluation,
+        )
         if best is None or candidate[:5] < best[:5]:
             best = candidate
+
     if best is None:
         return None
+
     evaluation = best[6].copy()
     evaluation["sequence"] = list(best[5])
     return evaluation
 
-def _build_route(
-    origin,
-    first_stop,
-    first_load,
-    chunks,
-    lookup,
-    config: ConsolidatedRouteConfig,
-):
-    stops = [first_stop]
-    load_by_stop = {first_stop: first_load}
+
+def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
+    stops = [first_chunk["destination"]]
+    stop_loads = [float(first_chunk["quantity"])]
+
+    def current_load():
+        return sum(stop_loads)
 
     while len(stops) < config.max_stops:
         candidates = []
-        for idx, (destination, quantity) in enumerate(chunks):
-            current_load = sum(load_by_stop.values())
-            if quantity + current_load > config.parcel_capacity + 1e-9:
+        for idx, chunk in enumerate(chunks):
+            quantity = float(chunk["quantity"])
+            if current_load() + quantity > config.parcel_capacity + 1e-9:
                 continue
 
-            trial_stops = stops + [destination]
+            trial_stops = stops + [chunk["destination"]]
             evaluation = _best_stop_sequence(origin, trial_stops, lookup, config)
             if evaluation is None:
                 continue
 
             endpoint = stops[-1]
-            added_leg = _travel(lookup, endpoint, destination)
-            direct_leg = _travel(lookup, origin, destination)
+            added_leg = _travel(lookup, endpoint, chunk["destination"])
+            direct_leg = _travel(lookup, origin, chunk["destination"])
             if added_leg is None or direct_leg is None:
                 continue
 
-            marginal_distance_ratio = added_leg["distance_km"] / max(direct_leg["distance_km"], 1e-9)
-            marginal_time_ratio = added_leg["travel_time_hours"] / max(direct_leg["travel_time_hours"], 1e-9)
+            marginal_distance_ratio = added_leg["distance_km"] / max(
+                direct_leg["distance_km"], 1e-9
+            )
+            marginal_time_ratio = added_leg["travel_time_hours"] / max(
+                direct_leg["travel_time_hours"], 1e-9
+            )
             marginal_score = (
                 config.distance_weight * marginal_distance_ratio
                 + config.time_weight * marginal_time_ratio
                 + config.economic_weight * evaluation["economic_ratio"]
             )
-            candidate_score = 0.5 * evaluation["detour_score"] + 0.5 * marginal_score
 
-            candidates.append((
-                candidate_score,
-                evaluation["economic_ratio"],
-                evaluation["detour_score"],
-                marginal_distance_ratio,
-                marginal_time_ratio,
-                -quantity,
-                idx,
-                destination,
-                quantity,
-            ))
+            candidates.append(
+                (
+                    0.5 * evaluation["detour_score"] + 0.5 * marginal_score,
+                    evaluation["economic_ratio"],
+                    evaluation["detour_score"],
+                    marginal_distance_ratio,
+                    marginal_time_ratio,
+                    -quantity,
+                    idx,
+                )
+            )
 
         if not candidates:
             break
 
-        candidate = min(candidates, key=lambda x: x[:5])
-        _, _, _, _, _, _, idx, destination, quantity = candidate
-        chunks.pop(idx)
-        stops.append(destination)
-        load_by_stop[destination] = quantity
+        selected = min(candidates, key=lambda x: x[:5])
+        idx = selected[6]
+        selected_chunk = chunks.pop(idx)
+        stops.append(selected_chunk["destination"])
+        stop_loads.append(float(selected_chunk["quantity"]))
 
-    sequence_result = _best_stop_sequence(origin, stops, lookup, config)
-    if sequence_result is None:
+    evaluation = _best_stop_sequence(origin, stops, lookup, config)
+    if evaluation is None:
         return None
 
-    sequence = sequence_result["sequence"]
-    loads = [load_by_stop[s] for s in sequence]
-    load = sum(loads)
+    # Reorder the load amounts with the chosen stop permutation.
+    load_by_destination: dict[str, float] = {}
+    for destination, quantity in zip(stops, stop_loads):
+        load_by_destination.setdefault(_hub_key(destination), 0.0)
+        load_by_destination[_hub_key(destination)] += quantity
+    ordered_loads = [load_by_destination[_hub_key(s)] for s in evaluation["sequence"]]
+    parcels = sum(ordered_loads)
 
+    total_weight = 0.0
+    total_volume = 0.0
+    for destination, qty in zip(evaluation["sequence"], ordered_loads):
+        profile = parcel_profiles[(_hub_key(origin), _hub_key(destination))]
+        total_weight += profile["avg_weight_kg"] * qty
+        total_volume += profile["avg_volume_m3"] * qty
+
+    # Schedule clock is a relative operating-hours approximation.
+    route_hours = evaluation["travel_time_hours"] + config.driver_break_hours
+    route_hours += config.staging_buffer_hours
+
+    if config.return_to_origin:
+        return_leg = _travel(lookup, evaluation["sequence"][-1], origin)
+        if return_leg is None:
+            return None
+        route_hours += return_leg["travel_time_hours"]
+        evaluation["distance_km"] += return_leg["distance_km"]
+        evaluation["drive_time_hours"] += return_leg["travel_time_hours"]
+        evaluation["travel_time_hours"] = route_hours
+        evaluation["transport_cost"] += (
+            config.cost_per_km * return_leg["distance_km"] * config.empty_return_factor
+        )
+
+    unload_hours = parcels * config.unloading_minutes_per_parcel / 60.0
+    route_hours += unload_hours
+    evaluation["travel_time_hours"] = route_hours
+
+    if total_weight > config.max_weight_kg + 1e-9:
+        return None
+    if total_volume > config.max_volume_m3 + 1e-9:
+        return None
+    if route_hours > config.max_route_hours + 1e-9:
+        return None
+
+    capacity_utilization = parcels / float(config.parcel_capacity)
     return {
         "origin_hub": origin,
-        "destination_hubs": sequence,
-        "stop_parcels": loads,
-        "parcels": load,
-        "stops": len(sequence),
-        "distance_km": sequence_result["distance_km"],
-        "travel_time_hours": sequence_result["travel_time_hours"],
-        "baseline_distance_km": sequence_result["baseline_distance_km"],
-        "baseline_time_hours": sequence_result["baseline_time_hours"],
-        "distance_ratio": sequence_result["distance_ratio"],
-        "time_ratio": sequence_result["time_ratio"],
-        "distance_detour_pct": sequence_result["distance_detour_pct"],
-        "time_detour_pct": sequence_result["time_detour_pct"],
-        "detour_score": sequence_result["detour_score"],
-        "economic_ratio": sequence_result["economic_ratio"],
-        "direct_dispatch_cost": sequence_result["direct_dispatch_cost"],
-        "estimated_savings": sequence_result["estimated_savings"],
-        "estimated_savings_pct": sequence_result["estimated_savings_pct"],
+        "destination_hubs": evaluation["sequence"],
+        "stop_parcels": ordered_loads,
+        "parcels": parcels,
+        "stops": len(evaluation["sequence"]),
+        "weight_kg": total_weight,
+        "volume_m3": total_volume,
+        "distance_km": evaluation["distance_km"],
+        "travel_time_hours": route_hours,
+        "drive_time_hours": evaluation["drive_time_hours"],
+        "baseline_distance_km": evaluation["baseline_distance_km"],
+        "baseline_time_hours": evaluation["baseline_time_hours"],
+        "distance_ratio": evaluation["distance_ratio"],
+        "time_ratio": evaluation["time_ratio"],
+        "distance_detour_pct": evaluation["distance_detour_pct"],
+        "time_detour_pct": evaluation["time_detour_pct"],
+        "detour_score": evaluation["detour_score"],
+        "economic_ratio": evaluation["economic_ratio"],
+        "direct_dispatch_cost": evaluation["direct_dispatch_cost"],
+        "estimated_savings": evaluation["estimated_savings"],
+        "estimated_savings_pct": evaluation["estimated_savings_pct"],
         "service_time_minutes_per_stop": config.service_time_minutes_per_stop,
-        "transport_cost": sequence_result["transport_cost"],
-        "capacity_utilization": load / float(config.parcel_capacity),
+        "transport_cost": evaluation["transport_cost"],
+        "capacity_utilization": capacity_utilization,
+        "weight_utilization": total_weight / max(config.max_weight_kg, 1e-9),
+        "volume_utilization": total_volume / max(config.max_volume_m3, 1e-9),
         "vehicle_type": config.vehicle_type,
+        "status": "planned",
     }
+
+
+def _vehicle_candidates(fleet: pd.DataFrame | None, config: ConsolidatedRouteConfig):
+    if fleet is None or fleet.empty:
+        return [config]
+
+    candidates = []
+    for row in fleet.itertuples(index=False):
+        if str(row.vehicle_type) == config.vehicle_type or config.vehicle_type == "any":
+            candidates.append(
+                ConsolidatedRouteConfig(
+                    vehicle_type=str(row.vehicle_type),
+                    parcel_capacity=int(row.parcel_capacity),
+                    max_route_hours=min(
+                        config.max_route_hours, float(row.max_trip_hours)
+                    ),
+                    fixed_trip_cost=float(row.fixed_trip_cost),
+                    cost_per_km=float(row.cost_per_km),
+                    max_stops=config.max_stops,
+                    vehicle_count=int(row.vehicle_count),
+                    operating_hours_per_day=float(row.operating_hours_per_day),
+                    distance_weight=config.distance_weight,
+                    time_weight=config.time_weight,
+                    economic_weight=config.economic_weight,
+                    service_time_minutes_per_stop=config.service_time_minutes_per_stop,
+                    max_weight_kg=float(getattr(row, "max_weight_kg", 12000.0)),
+                    max_volume_m3=float(getattr(row, "max_volume_m3", 65.0)),
+                    loading_minutes=config.loading_minutes,
+                    unloading_minutes_per_parcel=config.unloading_minutes_per_parcel,
+                    driver_break_hours=config.driver_break_hours,
+                    return_to_origin=config.return_to_origin,
+                    empty_return_factor=config.empty_return_factor,
+                    max_detour_pct=config.max_detour_pct,
+                    max_time_detour_pct=config.max_time_detour_pct,
+                    min_capacity_utilization=config.min_capacity_utilization,
+                    origin_cutoff_hour=config.origin_cutoff_hour,
+                    stop_cutoff_hour=config.stop_cutoff_hour,
+                    staging_buffer_hours=config.staging_buffer_hours,
+                )
+            )
+    return candidates or [config]
+
 
 def build_consolidated_routes(
     demand: pd.DataFrame,
     hubs: pd.DataFrame,
     cost: pd.DataFrame,
     config: ConsolidatedRouteConfig | None = None,
+    fleet: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    """
-    Build capacitated multi-stop linehaul routes from forecast hub-to-hub demand.
+    """Build a detour-aware, capacity-constrained linehaul plan.
 
-    The planner keeps the existing Olist hub network and real road-network
-    distance/time matrix. For each origin hub it repeatedly starts a route with
-    the largest remaining destination chunk, then adds the nearest feasible
-    destination chunks while respecting vehicle capacity, route time, and
-    stop limits.
+    The upstream network optimizer decides OD flow. This layer turns that flow
+    into physical multi-stop vehicle movements. Constraints include route time,
+    stop count, weight, cube/volume, fleet hours, driver break allowance,
+    optional return-to-origin, and a minimum practical load factor.
 
-    This is a deterministic consolidation heuristic, not a claim of global
-    VRP optimality. It is intentionally separate from the existing network-flow
-    optimizer so the portfolio can compare direct OD dispatches with physical
-    multi-stop routes.
+    This remains a deterministic heuristic, not a global VRP optimum.
     """
     config = config or ConsolidatedRouteConfig()
-    if config.parcel_capacity <= 0 or config.max_stops <= 0 or config.max_route_hours <= 0:
-        raise ValueError("Route capacity, stop limit, and route hours must be positive")
-    if config.vehicle_count <= 0 or config.operating_hours_per_day <= 0:
-        raise ValueError("Vehicle count and operating hours must be positive")
-    if (config.distance_weight < 0 or config.time_weight < 0 or config.economic_weight < 0 or config.distance_weight + config.time_weight + config.economic_weight <= 0):
-        raise ValueError("Route weights must be non-negative and not all zero")
+
+    if config.parcel_capacity <= 0 or config.max_stops <= 0:
+        raise ValueError("Parcel capacity and stop limit must be positive")
+    if config.max_route_hours <= 0 or config.vehicle_count <= 0:
+        raise ValueError("Route hours and vehicle count must be positive")
+    if config.operating_hours_per_day <= 0:
+        raise ValueError("Operating hours must be positive")
     if config.service_time_minutes_per_stop < 0:
-        raise ValueError("Service time per stop cannot be negative")
+        raise ValueError("Service time cannot be negative")
+    if config.min_capacity_utilization < 0 or config.min_capacity_utilization > 1:
+        raise ValueError("Minimum utilization must be between 0 and 1")
 
     required = {"origin_hub", "destination_hub", "parcel_count"}
     missing = required - set(demand.columns)
@@ -324,21 +435,31 @@ def build_consolidated_routes(
 
     d = demand.copy()
     d["parcel_count"] = pd.to_numeric(d["parcel_count"], errors="coerce").fillna(0).clip(lower=0)
-    d = (
-        d.groupby(["origin_hub", "destination_hub"], as_index=False)["parcel_count"]
-        .sum()
-    )
+    d = d.groupby(["origin_hub", "destination_hub"], as_index=False).parcel_count.sum()
     lookup = _route_lookup(cost)
 
-    routes = []
-    unmet = []
+    vehicle_configs = _vehicle_candidates(fleet, config)
+    routes: list[dict] = []
+    unmet: list[dict] = []
     direct_cost = 0.0
     total_requested = float(d["parcel_count"].sum())
 
-    remaining_fleet_hours = float(config.vehicle_count) * float(config.operating_hours_per_day)
+    parcel_profiles: dict[str, dict[str, float]] = {}
+    for row in d.itertuples(index=False):
+        key = (_hub_key(row.origin_hub), _hub_key(row.destination_hub))
+        parcel_profiles[key] = _parcel_profile(
+            demand, row.origin_hub, row.destination_hub, float(row.parcel_count)
+        )
+
+    # Track fleet hours by vehicle type instead of one pooled hour bucket.
+    fleet_hours_remaining = {
+        candidate.vehicle_type: candidate.vehicle_count * candidate.operating_hours_per_day
+        for candidate in vehicle_configs
+    }
 
     for origin, group in d.groupby("origin_hub", sort=False):
-        chunks = []
+        chunks: list[dict] = []
+
         for row in group.itertuples(index=False):
             destination = row.destination_hub
             quantity = float(row.parcel_count)
@@ -346,7 +467,9 @@ def build_consolidated_routes(
                 continue
             if _hub_key(origin) == _hub_key(destination):
                 continue
-            if (_hub_key(origin), _hub_key(destination)) not in lookup:
+
+            leg = _travel(lookup, origin, destination)
+            if leg is None:
                 unmet.append(
                     {
                         "origin_hub": origin,
@@ -357,7 +480,6 @@ def build_consolidated_routes(
                 )
                 continue
 
-            leg = lookup[(_hub_key(origin), _hub_key(destination))]
             if leg["travel_time_hours"] > config.max_route_hours:
                 unmet.append(
                     {
@@ -369,83 +491,117 @@ def build_consolidated_routes(
                 )
                 continue
 
-            direct_trips = math.ceil(quantity / config.parcel_capacity)
-            direct_cost += direct_trips * (
-                config.fixed_trip_cost + config.cost_per_km * leg["distance_km"]
+            best_direct_cost = min(
+                math.ceil(quantity / max(candidate.parcel_capacity, 1))
+                * (
+                    candidate.fixed_trip_cost
+                    + candidate.cost_per_km * leg["distance_km"]
+                )
+                for candidate in vehicle_configs
             )
-            for chunk in _chunks(quantity, config.parcel_capacity):
-                chunks.append((destination, chunk))
+            direct_cost += best_direct_cost
+
+            for chunk_qty in _chunks(quantity, max(c.parcel_capacity for c in vehicle_configs)):
+                chunks.append(
+                    {
+                        "destination": destination,
+                        "quantity": min(float(chunk_qty), quantity),
+                    }
+                )
+                quantity -= float(chunk_qty)
+                if quantity <= 1e-9:
+                    break
 
         while chunks:
-            # Largest demand first creates useful consolidation anchors.
-            chunks.sort(key=lambda x: (-x[1], str(x[0])))
-            first_destination, first_quantity = chunks.pop(0)
-            route = _build_route(
-                origin,
-                first_destination,
-                first_quantity,
-                chunks,
-                lookup,
-                config,
-            )
-            if route is None:
+            chunks.sort(key=lambda x: (-x["quantity"], str(x["destination"])))
+            first = chunks.pop(0)
+
+            candidate_routes = []
+            for candidate in vehicle_configs:
+                route = _build_route(
+                    origin,
+                    first,
+                    list(chunks),
+                    lookup,
+                    candidate,
+                    parcel_profiles,
+                )
+                if route is None:
+                    continue
+                if route["capacity_utilization"] < candidate.min_capacity_utilization and len(chunks) > 0:
+                    continue
+
+                hours_left = fleet_hours_remaining[candidate.vehicle_type]
+                if route["travel_time_hours"] > hours_left + 1e-9:
+                    continue
+
+                candidate_routes.append(route)
+
+            if not candidate_routes:
                 unmet.append(
                     {
                         "origin_hub": origin,
-                        "destination_hub": first_destination,
-                        "unmet_parcels": first_quantity,
-                        "reason": "no_feasible_road_leg",
+                        "destination_hub": first["destination"],
+                        "unmet_parcels": first["quantity"],
+                        "reason": "no_feasible_vehicle_or_route",
                     }
                 )
                 continue
-            if route["travel_time_hours"] > remaining_fleet_hours + 1e-9:
-                unmet.append({
-                    "origin_hub": origin,
-                    "destination_hub": first_destination,
-                    "unmet_parcels": route["parcels"],
-                    "reason": "fleet_hours_exhausted",
-                })
-                continue
-            remaining_fleet_hours -= route["travel_time_hours"]
-            routes.append(route)
+
+            chosen = min(
+                candidate_routes,
+                key=lambda r: (
+                    r["transport_cost"] / max(r["parcels"], 1e-9),
+                    r["detour_score"],
+                    -r["capacity_utilization"],
+                    r["travel_time_hours"],
+                ),
+            )
+            routes.append(chosen)
+            fleet_hours_remaining[chosen["vehicle_type"]] -= chosen["travel_time_hours"]
+
+            # Reconcile the exact quantity served at each stop so partially used
+            # chunks remain available for the next route.
+            served_by_destination = {}
+            for destination, quantity in zip(
+                chosen["destination_hubs"], chosen["stop_parcels"]
+            ):
+                key = _hub_key(destination)
+                served_by_destination[key] = (
+                    served_by_destination.get(key, 0.0) + float(quantity)
+                )
+
+            remaining_chunks = []
+            for chunk in chunks:
+                key = _hub_key(chunk["destination"])
+                available = float(chunk["quantity"])
+                served = min(available, max(served_by_destination.get(key, 0.0), 0.0))
+                served_by_destination[key] = max(
+                    served_by_destination.get(key, 0.0) - served, 0.0
+                )
+                remainder = available - served
+                if remainder > 1e-9:
+                    remaining_chunks.append(
+                        {"destination": chunk["destination"], "quantity": remainder}
+                    )
+            chunks = remaining_chunks
 
     route_rows = []
     for route_id, route in enumerate(routes, start=1):
-        route_rows.append(
-            {
-                "route_id": route_id,
-                "origin_hub": route["origin_hub"],
-                "destination_hubs": route["destination_hubs"],
-                "stop_parcels": route["stop_parcels"],
-                "parcels": route["parcels"],
-                "stops": route["stops"],
-                "distance_km": route["distance_km"],
-                "travel_time_hours": route["travel_time_hours"],
-                "transport_cost": route["transport_cost"],
-                "capacity_utilization": route["capacity_utilization"],
-                "distance_ratio": route["distance_ratio"],
-                "time_ratio": route["time_ratio"],
-                "distance_detour_pct": route["distance_detour_pct"],
-                "time_detour_pct": route["time_detour_pct"],
-                "detour_score": route["detour_score"],
-                "vehicle_type": route["vehicle_type"],
-                "status": "consolidated_route",
-            }
-        )
+        route_rows.append({"route_id": route_id, **route})
 
     out = pd.DataFrame(route_rows)
     unmet_df = pd.DataFrame(unmet)
 
     local_served = float(
-        d.loc[d["origin_hub"] == d["destination_hub"], "parcel_count"].sum()
+        d.loc[
+            d["origin_hub"].map(_hub_key).eq(d["destination_hub"].map(_hub_key)),
+            "parcel_count",
+        ].sum()
     )
     served = float(out["parcels"].sum()) if not out.empty else 0.0
     unmet_total = float(unmet_df["unmet_parcels"].sum()) if not unmet_df.empty else 0.0
     route_cost = float(out["transport_cost"].sum()) if not out.empty else 0.0
-    route_count = len(out)
-    avg_utilization = (
-        float(out["capacity_utilization"].mean()) if not out.empty else 0.0
-    )
 
     metrics = {
         "status": "ok",
@@ -453,26 +609,35 @@ def build_consolidated_routes(
         "served_parcels": served + local_served,
         "unmet_parcels": unmet_total,
         "service_level": (served + local_served) / max(total_requested, 1.0),
-        "consolidated_routes": route_count,
+        "consolidated_routes": len(out),
         "average_stops": float(out["stops"].mean()) if not out.empty else 0.0,
-        "average_capacity_utilization": avg_utilization,
+        "average_capacity_utilization": float(out["capacity_utilization"].mean()) if not out.empty else 0.0,
+        "average_weight_utilization": float(out["weight_utilization"].mean()) if not out.empty else 0.0,
+        "average_volume_utilization": float(out["volume_utilization"].mean()) if not out.empty else 0.0,
         "total_transport_cost": route_cost,
         "direct_dispatch_cost": direct_cost,
         "estimated_cost_savings": direct_cost - route_cost,
         "estimated_cost_savings_pct": (
-            100.0 * (direct_cost - route_cost) / direct_cost
-            if direct_cost > 0
-            else 0.0
+            100.0 * (direct_cost - route_cost) / direct_cost if direct_cost > 0 else 0.0
         ),
         "local_parcels_assumed_served": local_served,
-        "fleet_hours_available": float(config.vehicle_count * config.operating_hours_per_day),
-        "fleet_hours_used": float(config.vehicle_count * config.operating_hours_per_day - remaining_fleet_hours),
-        "fleet_hours_remaining": float(remaining_fleet_hours),
+        "fleet_hours_available": float(sum(
+            candidate.vehicle_count * candidate.operating_hours_per_day
+            for candidate in vehicle_configs
+        )),
+        "fleet_hours_used": float(
+            sum(
+                candidate.vehicle_count * candidate.operating_hours_per_day
+                for candidate in vehicle_configs
+            )
+            - sum(fleet_hours_remaining.values())
+        ),
+        "fleet_hours_remaining": fleet_hours_remaining,
+        "unmet_reasons": (
+            unmet_df.groupby("reason")["unmet_parcels"].sum().to_dict()
+            if not unmet_df.empty
+            else {}
+        ),
     }
-
-    if not unmet_df.empty:
-        metrics["unmet_reasons"] = unmet_df.groupby("reason")["unmet_parcels"].sum().to_dict()
-    else:
-        metrics["unmet_reasons"] = {}
 
     return out, metrics

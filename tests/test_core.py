@@ -387,6 +387,65 @@ def test_consolidated_routing_rejects_dominated_stop_order():
     assert routes.iloc[0]["time_detour_pct"] == pytest.approx(0.0)
 
 
+def test_routing_enforces_weight_and_volume():
+    from src.optimization.consolidated_routing import build_consolidated_routes, ConsolidatedRouteConfig
+    demand = pd.DataFrame([
+        {"origin_hub":"A","destination_hub":"B","parcel_count":20,"weight_kg":10.0,"volume_m3":0.20},
+    ])
+    hubs = pd.DataFrame([{"hub_id":"A","lat":0.0,"lng":0.0},{"hub_id":"B","lat":1.0,"lng":1.0}])
+    cost = pd.DataFrame([{"origin_hub":"A","destination_hub":"B","distance_km":100.0,"travel_time_hours":2.0}])
+    cfg = ConsolidatedRouteConfig(
+        parcel_capacity=40, max_route_hours=16, max_stops=2,
+        max_weight_kg=100.0, max_volume_m3=2.0,
+    )
+    routes, metrics = build_consolidated_routes(demand, hubs, cost, cfg)
+    assert len(routes) == 0
+    assert metrics["unmet_parcels"] == pytest.approx(20.0)
+
+
+def test_routing_accounts_for_round_trip_time():
+    from src.optimization.consolidated_routing import build_consolidated_routes, ConsolidatedRouteConfig
+    demand = pd.DataFrame([
+        {"origin_hub":"A","destination_hub":"B","parcel_count":10},
+    ])
+    hubs = pd.DataFrame([{"hub_id":"A","lat":0.0,"lng":0.0},{"hub_id":"B","lat":1.0,"lng":1.0}])
+    cost = pd.DataFrame([
+        {"origin_hub":"A","destination_hub":"B","distance_km":100.0,"travel_time_hours":4.0},
+        {"origin_hub":"B","destination_hub":"A","distance_km":100.0,"travel_time_hours":4.0},
+    ])
+    cfg = ConsolidatedRouteConfig(
+        parcel_capacity=40, max_route_hours=12, max_stops=2,
+        return_to_origin=True, service_time_minutes_per_stop=0,
+        loading_minutes=0, unloading_minutes_per_parcel=0,
+        driver_break_hours=0, staging_buffer_hours=0,
+    )
+    routes, metrics = build_consolidated_routes(demand, hubs, cost, cfg)
+    assert len(routes) == 1
+    assert routes.iloc[0]["distance_km"] == pytest.approx(200.0)
+    assert routes.iloc[0]["travel_time_hours"] == pytest.approx(8.0)
+
+
+def test_routing_supports_parcel_level_weight_and_volume_profiles():
+    from src.optimization.consolidated_routing import build_consolidated_routes, ConsolidatedRouteConfig
+    demand = pd.DataFrame([
+        {"origin_hub":"A","destination_hub":"B","parcel_count":10,"weight_kg":5.0,"volume_m3":0.05},
+        {"origin_hub":"A","destination_hub":"C","parcel_count":10,"weight_kg":1.0,"volume_m3":0.02},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id":"A","lat":0.0,"lng":0.0},{"hub_id":"B","lat":1.0,"lng":1.0},{"hub_id":"C","lat":2.0,"lng":2.0}
+    ])
+    cost = pd.DataFrame([
+        {"origin_hub":"A","destination_hub":"B","distance_km":100.0,"travel_time_hours":2.0},
+        {"origin_hub":"A","destination_hub":"C","distance_km":80.0,"travel_time_hours":1.5},
+        {"origin_hub":"B","destination_hub":"C","distance_km":20.0,"travel_time_hours":0.5},
+        {"origin_hub":"C","destination_hub":"B","distance_km":20.0,"travel_time_hours":0.5},
+    ])
+    cfg = ConsolidatedRouteConfig(parcel_capacity=40, max_route_hours=16, max_stops=3, max_weight_kg=100.0, max_volume_m3=2.0)
+    routes, _ = build_consolidated_routes(demand, hubs, cost, cfg)
+    assert len(routes) == 1
+    assert routes.iloc[0]["weight_kg"] == pytest.approx(60.0)
+    assert routes.iloc[0]["volume_m3"] == pytest.approx(0.7)
+
 
 def test_optimizer_accepts_string_hub_ids():
     demand = pd.DataFrame([

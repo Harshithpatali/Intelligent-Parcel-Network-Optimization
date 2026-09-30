@@ -80,3 +80,24 @@ Intervention costs and disruption distributions are explicitly synthetic stress-
 The FastAPI + Streamlit container is deployment-ready as a research application. The deployed API uses demo data unless the production data-serving layer is explicitly wired to the populated Supabase artifacts. Do not represent demo outputs as live carrier operations.
 
 For the final deployment, run the pre-deployment gate, populate the OSRM matrix from an outbound-HTTPS runner, execute the forecast training pipeline, validate the resulting metrics, and then deploy the container.
+
+
+## Physical routing upgrade
+
+The routing layer now models a broader set of parcel-linehaul constraints:
+
+- heterogeneous vehicle selection from the fleet table
+- parcel-count, weight and cube/volume capacity
+- explicit loading, unloading and driver-break time
+- optional return-to-origin and empty-return economics
+- maximum distance and time detour guardrails versus direct dispatch
+- fleet-hour capacity tracked by vehicle type
+- minimum practical load-factor rule
+- parcel-level weight/volume profiles when available in the input data
+- explicit unmet-demand reason codes
+
+The route planner remains a deterministic, auditable heuristic rather than a claim of global VRP optimality. The upstream network-flow optimizer continues to decide OD allocation; this routing layer converts that allocation into physical trips.
+
+## Real-world data boundary
+
+Open Olist transactions and open geospatial/routing data are inputs to the research system. Carrier-specific costs, driver rules, handling SLAs, fleet composition, and other operational policies are scenario assumptions unless explicitly calibrated from an external source. The application therefore reports modeled outcomes rather than representing any carrier's proprietary operating network.
