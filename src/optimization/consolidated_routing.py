@@ -204,74 +204,51 @@ def _build_route(
 
     while len(stops) < config.max_stops:
         candidates = []
-
         for idx, (destination, quantity) in enumerate(chunks):
             current_load = sum(load_by_stop.values())
             if quantity + current_load > config.parcel_capacity + 1e-9:
                 continue
 
             trial_stops = stops + [destination]
-            evaluation = _best_stop_sequence(
-                origin, trial_stops, lookup, config
-            )
+            evaluation = _best_stop_sequence(origin, trial_stops, lookup, config)
             if evaluation is None:
                 continue
 
-            # Marginal detour check:
-            # compare the new stop's leg from the current route endpoint
-            # with serving that destination directly from the origin.
             endpoint = stops[-1]
             added_leg = _travel(lookup, endpoint, destination)
             direct_leg = _travel(lookup, origin, destination)
             if added_leg is None or direct_leg is None:
                 continue
 
-            marginal_distance_ratio = (
-                added_leg["distance_km"] / max(direct_leg["distance_km"], 1e-9)
-            )
-            marginal_time_ratio = (
-                added_leg["travel_time_hours"]
-                / max(direct_leg["travel_time_hours"], 1e-9)
-            )
-
-            # Candidate score combines the complete-route detour with the
-            # marginal detour introduced by this additional stop.
+            marginal_distance_ratio = added_leg["distance_km"] / max(direct_leg["distance_km"], 1e-9)
+            marginal_time_ratio = added_leg["travel_time_hours"] / max(direct_leg["travel_time_hours"], 1e-9)
             marginal_score = (
                 config.distance_weight * marginal_distance_ratio
                 + config.time_weight * marginal_time_ratio
             )
-            candidate_score = (
-                0.5 * evaluation["detour_score"]
-                + 0.5 * marginal_score
-            )
+            candidate_score = 0.5 * evaluation["detour_score"] + 0.5 * marginal_score
 
-            candidates.append(
-                (
-                    candidate_score,
-                    evaluation["detour_score"],
-                    marginal_distance_ratio,
-                    marginal_time_ratio,
-                    -quantity,
-                    idx,
-                    destination,
-                    quantity,
-                    evaluation,
-                )
-            )
+            candidates.append((
+                candidate_score,
+                evaluation["detour_score"],
+                marginal_distance_ratio,
+                marginal_time_ratio,
+                -quantity,
+                idx,
+                destination,
+                quantity,
+            ))
 
         if not candidates:
             break
 
         candidate = min(candidates, key=lambda x: x[:5])
-        _, _, _, _, _, idx, destination, quantity, _ = candidate
-
+        _, _, _, _, _, idx, destination, quantity = candidate
         chunks.pop(idx)
         stops.append(destination)
         load_by_stop[destination] = quantity
 
-    sequence_result = _best_stop_sequence(
-        origin, stops, lookup, config
-    )
+    sequence_result = _best_stop_sequence(origin, stops, lookup, config)
     if sequence_result is None:
         return None
 
@@ -294,10 +271,7 @@ def _build_route(
         "distance_detour_pct": sequence_result["distance_detour_pct"],
         "time_detour_pct": sequence_result["time_detour_pct"],
         "detour_score": sequence_result["detour_score"],
-        "transport_cost": (
-            config.fixed_trip_cost
-            + config.cost_per_km * sequence_result["distance_km"]
-        ),
+        "transport_cost": config.fixed_trip_cost + config.cost_per_km * sequence_result["distance_km"],
         "capacity_utilization": load / float(config.parcel_capacity),
         "vehicle_type": config.vehicle_type,
     }
