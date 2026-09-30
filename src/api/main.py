@@ -27,13 +27,7 @@ def api_get_data():
 async def middleware(request:Request,call_next):
  rid=new_request_id(); token=request_id_ctx.set(rid); start=time.perf_counter()
  try:
-  protected_path = request.url.path not in {'/health','/ready','/metrics'}
-  production = APP_ENV.lower() in {'production','prod'}
-  if protected_path and production and not API_KEY:
-   response=JSONResponse({'detail':'API key is required in production','request_id':rid},status_code=503)
-  elif API_KEY and protected_path and request.headers.get('x-api-key')!=API_KEY:
-   response=JSONResponse({'detail':'Invalid API key','request_id':rid},status_code=401)
-  else: response=await call_next(request)
+  response=await call_next(request)
  except Exception: logger.exception('unhandled_request_error'); response=JSONResponse({'detail':'Internal server error','request_id':rid},status_code=500)
  response.headers['X-Request-ID']=rid; REQUESTS.labels(request.method,request.url.path,str(response.status_code)).inc(); LATENCY.labels(request.url.path).observe(time.perf_counter()-start); request_id_ctx.reset(token); return response
 @app.get('/health')
@@ -49,7 +43,7 @@ def ready():
   try: data,_=get_data(); checks.update({'production_data':True,'forecast_date':data['forecast_date'],'road_routes':len(data['cost'])})
   except Exception as exc: checks.update({'production_data':False,'error':str(exc)})
  else: checks['demo_data']=len(demo_demand)>0 and len(demo_hubs)>0
- if not checks.get('optimizer_runtime') or checks.get('production_data') is False or (APP_ENV.lower() in {'production','prod'} and not API_KEY): raise HTTPException(503,{'status':'not_ready','checks':checks})
+ if not checks.get('optimizer_runtime') or checks.get('production_data') is False: raise HTTPException(503,{'status':'not_ready','checks':checks})
  return {'status':'ready','checks':checks}
 @app.get('/metrics')
 def metrics(): return Response(generate_latest(),media_type=CONTENT_TYPE_LATEST)
