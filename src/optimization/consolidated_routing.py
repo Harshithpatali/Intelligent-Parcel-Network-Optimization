@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import itertools
 import pandas as pd
 
 
@@ -105,6 +106,47 @@ def _improve_stop_order(origin, stops, lookup):
 
     return sequence, current
 
+def _sequence_metrics(origin, sequence, lookup):
+    distance = 0.0
+    hours = 0.0
+    current = origin
+    for destination in sequence:
+        leg = _travel(lookup, current, destination)
+        if leg is None:
+            return None
+        distance += leg["distance_km"]
+        hours += leg["travel_time_hours"]
+        current = destination
+    return distance, hours
+
+
+def _best_stop_sequence(origin, stops, lookup, max_route_hours):
+    """
+    Evaluate feasible permutations of a small stop set.
+
+    For two stops A->B->C versus A->C->B, the planner explicitly checks
+    both distance and time. A route is not accepted merely because it
+    carries more parcels: a dominated sequence (higher distance AND higher
+    travel time) is rejected in favour of the non-dominated ordering.
+    """
+    best = None
+    for sequence in itertools.permutations(stops):
+        metrics = _sequence_metrics(origin, sequence, lookup)
+        if metrics is None:
+            continue
+        distance, hours = metrics
+        if hours > max_route_hours + 1e-9:
+            continue
+        candidate = (distance, hours, tuple(str(x) for x in sequence), sequence)
+        if best is None or candidate[:3] < best[:3]:
+            best = candidate
+    return None if best is None else {
+        "sequence": list(best[3]),
+        "distance_km": best[0],
+        "travel_time_hours": best[1],
+    }
+
+
 def _build_route(
     origin,
     first_stop,
@@ -114,85 +156,57 @@ def _build_route(
     config: ConsolidatedRouteConfig,
 ):
     stops = [first_stop]
-    loads = [first_load]
-    load = first_load
-    distance = 0.0
-    hours = 0.0
-    current = origin
-
-    leg = _travel(lookup, current, first_stop)
-    if leg is None:
-        return None
-    distance += leg["distance_km"]
-    hours += leg["travel_time_hours"]
+    load_by_stop = {first_stop: first_load}
 
     while len(stops) < config.max_stops:
         candidates = []
-        for idx, chunk in enumerate(chunks):
-            destination, quantity = chunk
-            if quantity + load > config.parcel_capacity + 1e-9:
+        for idx, (destination, quantity) in enumerate(chunks):
+            if quantity + sum(load_by_stop.values()) > config.parcel_capacity + 1e-9:
                 continue
-
-            # Test every insertion position, not only append-at-end.
-            # This catches cases where A->B->C is longer/slower than
-            # A->C->B and can also make an otherwise infeasible sequence feasible.
-            for position in range(len(stops) + 1):
-                candidate_stops = (
-                    stops[:position] + [destination] + stops[position:]
+            trial_stops = stops + [destination]
+            metrics = _best_stop_sequence(
+                origin, trial_stops, lookup, config.max_route_hours
+            )
+            if metrics is None:
+                continue
+            candidates.append(
+                (
+                    metrics["distance_km"],
+                    metrics["travel_time_hours"],
+                    -quantity,
+                    idx,
+                    destination,
+                    quantity,
                 )
-                metrics = _route_metrics(origin, candidate_stops, lookup)
-                if metrics is None:
-                    continue
-                candidate_distance, candidate_hours = metrics
-                if candidate_hours > config.max_route_hours + 1e-9:
-                    continue
-
-                # Distance is the primary physical cost; time is the
-                # secondary tie-breaker. A later Pareto check also prevents
-                # a sequence that is simultaneously longer and slower.
-                candidates.append(
-                    (
-                        candidate_distance,
-                        candidate_hours,
-                        -quantity,
-                        idx,
-                        position,
-                        destination,
-                        quantity,
-                    )
-                )
+            )
 
         if not candidates:
             break
 
-        _, _, _, idx, position, destination, quantity = min(candidates)
+        _, _, _, idx, destination, quantity = min(candidates)
         chunks.pop(idx)
-        stops.insert(position, destination)
-        loads.insert(position, quantity)
-        load += quantity
+        stops.append(destination)
+        load_by_stop[destination] = quantity
 
-        route_metrics = _route_metrics(origin, stops, lookup)
-        if route_metrics is None:
-            raise RuntimeError("Route insertion produced an invalid road sequence")
-        distance, hours = route_metrics
-        current = stops[-1]
+    sequence_result = _best_stop_sequence(
+        origin, stops, lookup, config.max_route_hours
+    )
+    if sequence_result is None:
+        return None
 
-    improved_stops, improved_metrics = _improve_stop_order(origin, stops, lookup)
-    if improved_metrics is not None and improved_stops != stops:
-        load_by_destination = dict(zip(stops, loads))
-        stops = improved_stops
-        loads = [load_by_destination[destination] for destination in stops]
-        distance, hours = improved_metrics
+    sequence = sequence_result["sequence"]
+    loads = [load_by_stop[s] for s in sequence]
+    load = sum(loads)
 
     return {
         "origin_hub": origin,
-        "destination_hubs": stops,
+        "destination_hubs": sequence,
         "stop_parcels": loads,
         "parcels": load,
-        "stops": len(stops),
-        "distance_km": distance,
-        "travel_time_hours": hours,
-        "transport_cost": config.fixed_trip_cost + config.cost_per_km * distance,
+        "stops": len(sequence),
+        "distance_km": sequence_result["distance_km"],
+        "travel_time_hours": sequence_result["travel_time_hours"],
+        "transport_cost": config.fixed_trip_cost + config.cost_per_km * sequence_result["distance_km"],
         "capacity_utilization": load / float(config.parcel_capacity),
         "vehicle_type": config.vehicle_type,
     }
