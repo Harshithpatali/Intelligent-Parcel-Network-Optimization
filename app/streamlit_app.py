@@ -18,7 +18,7 @@ with t2:
  if st.button("Run optimization",type="primary"):
   r=post("/optimize",{"demand_multiplier":surge,"capacity_multiplier":cap,"service_level_target":service});
   if r.ok:
-   m=r.json()["metrics"]; x,y,z=st.columns(3); x.metric("Service level",f"{m['service_level']:.1%}"); y.metric("Unmet parcels",f"{m['unmet_demand']:.1f}"); z.metric("Transport cost",f"{m['total_transport_cost']:.2f}"); st.dataframe(pd.DataFrame(r.json()["flows"]),use_container_width=True,hide_index=True)
+   m=r.json()["metrics"]; x,y,z=st.columns(3); x.metric("Service level",f"{m['service_level']:.1%}"); y.metric("Unmet parcels",f"{m['unmet_demand']:.1f}"); z.metric("Transport cost",f"{m['total_transport_cost']:.2f}"); st.dataframe(pd.DataFrame(r.json()["flows"]),use_container_width=True,hide_index=True); st.caption("Trip cost is a fixed dispatch + distance charge. Low utilization is surfaced rather than hidden; unmet rows are not transportation with zero cost.")
   else: st.error(r.text)
  st.subheader("Disruption scenario"); scenario=st.selectbox("Scenario",["demand_surge","capacity_shock","fleet_shortage","hub_outage","road_disruption","combined"])
  if st.button("Run disruption"):
