@@ -143,3 +143,27 @@ def test_same_hub_demand_is_not_counted_as_network_unmet():
     assert metrics["total_parcels"] == pytest.approx(25.0)
     assert metrics["unmet_demand"] == pytest.approx(0.0)
     assert metrics["local_parcels_assumed_served"] == pytest.approx(15.0)
+
+
+def test_trip_cost_is_fixed_charge_not_per_parcel():
+    demand = pd.DataFrame([{"origin_hub": 1, "destination_hub": 2, "parcel_count": 1}])
+    hubs = pd.DataFrame([
+        {"hub_id": 1, "capacity_parcels": 100},
+        {"hub_id": 2, "capacity_parcels": 100},
+    ])
+    fleet = pd.DataFrame([{
+        "vehicle_type": "default", "vehicle_count": 2, "parcel_capacity": 40,
+        "operating_hours_per_day": 12.0, "fixed_trip_cost": 25.0,
+        "cost_per_km": 0.10, "max_trip_hours": 12.0
+    }])
+    cost = pd.DataFrame([{
+        "origin_hub": 1, "destination_hub": 2, "distance_km": 10.0,
+        "unit_cost": 1.0, "travel_time_hours": 1.0
+    }])
+    flows, metrics = solve_network(demand, hubs, cost=cost, fleet=fleet)
+    row = flows.iloc[0]
+    assert row["trips"] == 1
+    assert row["parcels"] == pytest.approx(1.0)
+    assert row["transport_cost"] == pytest.approx(26.0)
+    assert row["capacity_utilization"] == pytest.approx(1 / 40)
+    assert row["status"] == "served"
