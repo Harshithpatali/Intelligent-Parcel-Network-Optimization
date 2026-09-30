@@ -151,6 +151,35 @@ else:
     )
 
 hubs = pd.DataFrame(network["hubs"])
+
+# Normalize production/demo hub schemas so the UI does not depend on one
+# database naming convention (e.g. lon vs longitude, lat vs latitude).
+_hub_aliases = {
+    "latitude": "lat",
+    "longitude": "lon",
+    "lng": "lon",
+    "capacity": "capacity_parcels",
+    "handling_capacity_parcels": "handling_capacity",
+}
+for _src, _dst in _hub_aliases.items():
+    if _src in hubs.columns and _dst not in hubs.columns:
+        hubs[_dst] = hubs[_src]
+
+for _col, _default in {
+    "hub_id": "UNKNOWN",
+    "city": "Unknown",
+    "lat": float("nan"),
+    "lon": float("nan"),
+    "capacity_parcels": 0.0,
+    "handling_capacity": 0.0,
+}.items():
+    if _col not in hubs.columns:
+        hubs[_col] = _default
+
+hubs["lat"] = pd.to_numeric(hubs["lat"], errors="coerce")
+hubs["lon"] = pd.to_numeric(hubs["lon"], errors="coerce")
+hubs["capacity_parcels"] = pd.to_numeric(hubs["capacity_parcels"], errors="coerce").fillna(0)
+hubs["handling_capacity"] = pd.to_numeric(hubs["handling_capacity"], errors="coerce").fillna(0)
 st.markdown('<div class="fx-section"><div class="fx-section-title">Network command summary</div><div class="fx-section-sub">Current model coverage and operational topology</div></div>', unsafe_allow_html=True)
 c1, c2, c3, c4 = st.columns(4)
 cards = [
@@ -415,7 +444,7 @@ with t6:
                 st.caption("Unmet reasons: " + ", ".join(f"{k}={v:.0f}" for k,v in metrics["unmet_reasons"].items()))
 
             if not routes.empty:
-                coord = {str(row.hub_id): (float(row.lat), float(row.lng)) for row in hubs.itertuples() if pd.notna(row.lat) and pd.notna(row.lng)}
+                coord = {str(row.hub_id): (float(row.lat), float(row.lon)) for row in hubs.itertuples() if pd.notna(row.lat) and pd.notna(row.lon)}
                 if coord:
                     fmap = folium.Map(
                         location=[sum(v[0] for v in coord.values()) / len(coord), sum(v[1] for v in coord.values()) / len(coord)],
