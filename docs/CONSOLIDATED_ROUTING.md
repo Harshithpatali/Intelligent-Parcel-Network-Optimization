@@ -27,17 +27,21 @@ For each origin hub:
    - vehicle capacity
    - maximum route hours
    - maximum stops
-5. Respect the available linehaul fleet-hour budget; excess demand becomes explicitly unmet.
-6. Repeat until all feasible demand is assigned.
+5. Add stop service time to route duration.
+6. Score candidate sequences using distance detour, travel-time detour, and transport economics rather than distance alone.
+7. Respect the available linehaul fleet-hour budget; excess demand becomes explicitly unmet.
+8. Repeat until all feasible demand is assigned.
 7. Compare consolidated route cost with direct OD dispatch cost.
 
-The objective is operationally interpretable:
+The objective is operationally interpretable and explicitly separates physical efficiency from economic efficiency:
 
 [
 C_r = F + c_{km}D_r
 ]
 
 where (F) is the fixed trip cost, (c_{km}) is the assumed cost per kilometre, and (D_r) is route distance.
+
+The consolidation score combines normalized distance ratio, normalized travel-time ratio, and consolidated/direct transport-cost ratio. This prevents a mathematically short route from being selected when its operating economics are worse.
 
 Capacity utilization is:
 
@@ -111,6 +115,7 @@ This is a multi-stop linehaul consolidation layer, not a complete vehicle-routin
 - parcel-level pickup/delivery sequencing
 - loading/unloading service times
 - driver shift regulations
+- weight/volume capacity constraints (the current model uses parcel-count capacity)
 - stochastic traffic
 - exact road geometry for every displayed route
 - cross-origin vehicle repositioning
