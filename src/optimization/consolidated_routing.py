@@ -13,6 +13,8 @@ class ConsolidatedRouteConfig:
     fixed_trip_cost: float = 45.0
     cost_per_km: float = 0.075
     max_stops: int = 5
+    vehicle_count: int = 10
+    operating_hours_per_day: float = 16.0
 
 
 def _route_lookup(cost: pd.DataFrame) -> dict[tuple[object, object], dict[str, float]]:
@@ -143,6 +145,8 @@ def build_consolidated_routes(
     config = config or ConsolidatedRouteConfig()
     if config.parcel_capacity <= 0 or config.max_stops <= 0 or config.max_route_hours <= 0:
         raise ValueError("Route capacity, stop limit, and route hours must be positive")
+    if config.vehicle_count <= 0 or config.operating_hours_per_day <= 0:
+        raise ValueError("Vehicle count and operating hours must be positive")
 
     required = {"origin_hub", "destination_hub", "parcel_count"}
     missing = required - set(demand.columns)
@@ -161,6 +165,8 @@ def build_consolidated_routes(
     unmet = []
     direct_cost = 0.0
     total_requested = float(d["parcel_count"].sum())
+
+    remaining_fleet_hours = float(config.vehicle_count) * float(config.operating_hours_per_day)
 
     for origin, group in d.groupby("origin_hub", sort=False):
         chunks = []
@@ -184,11 +190,6 @@ def build_consolidated_routes(
                 continue
 
             leg = lookup[(origin, destination)]
-            direct_trips = math.ceil(quantity / config.parcel_capacity)
-            direct_cost += direct_trips * (
-                config.fixed_trip_cost + config.cost_per_km * leg["distance_km"]
-            )
-
             if leg["travel_time_hours"] > config.max_route_hours:
                 unmet.append(
                     {
@@ -200,6 +201,10 @@ def build_consolidated_routes(
                 )
                 continue
 
+            direct_trips = math.ceil(quantity / config.parcel_capacity)
+            direct_cost += direct_trips * (
+                config.fixed_trip_cost + config.cost_per_km * leg["distance_km"]
+            )
             for chunk in _chunks(quantity, config.parcel_capacity):
                 chunks.append((destination, chunk))
 
@@ -225,6 +230,15 @@ def build_consolidated_routes(
                     }
                 )
                 continue
+            if route["travel_time_hours"] > remaining_fleet_hours + 1e-9:
+                unmet.append({
+                    "origin_hub": origin,
+                    "destination_hub": first_destination,
+                    "unmet_parcels": route["parcels"],
+                    "reason": "fleet_hours_exhausted",
+                })
+                continue
+            remaining_fleet_hours -= route["travel_time_hours"]
             routes.append(route)
 
     route_rows = []
@@ -278,6 +292,9 @@ def build_consolidated_routes(
             else 0.0
         ),
         "local_parcels_assumed_served": local_served,
+        "fleet_hours_available": float(config.vehicle_count * config.operating_hours_per_day),
+        "fleet_hours_used": float(config.vehicle_count * config.operating_hours_per_day - remaining_fleet_hours),
+        "fleet_hours_remaining": float(remaining_fleet_hours),
     }
 
     if not unmet_df.empty:
