@@ -62,7 +62,7 @@ hubs = pd.DataFrame(network["hubs"])
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Candidate hubs", summary["hubs"])
 c2.metric("OD demand rows", summary["demand_rows"])
-c3.metric("Routes", network.get("routes", 0))
+c3.metric("Road routes", network.get("routes", 0))
 c4.metric("Mode", "Production" if prod else "Demo")
 
 t1, t2, t3, t4, t5, t6 = st.tabs(
