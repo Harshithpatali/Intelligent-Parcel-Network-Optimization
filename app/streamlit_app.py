@@ -10,11 +10,25 @@ API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
 HEADERS = {"x-api-key": API_KEY} if API_KEY else {}
 
-st.set_page_config(page_title="Parcel Network Control Tower", layout="wide")
-st.title("Intelligent Parcel Network Control Tower")
-st.caption("Olist-calibrated research network · predictive forecasting · stochastic resilience · intervention optimization")
+st.set_page_config(page_title="Parcel Network Control Tower", page_icon="📦", layout="wide")
 
+st.markdown("""
+<style>
+:root { --fx-purple:#4D148C; --fx-orange:#FF6600; }
+.block-container { padding-top:1.4rem; padding-bottom:2rem; }
+.fx-header { background:linear-gradient(100deg,#4D148C 0%,#5d1aa0 72%,#FF6600 100%); border-radius:14px; padding:22px 28px; color:white; margin-bottom:10px; box-shadow:0 6px 22px rgba(77,20,140,.16); }
+.fx-header h1 { margin:0; font-size:2rem; letter-spacing:-.02em; }
+.fx-header p { margin:7px 0 0; opacity:.92; font-size:.95rem; }
+.fx-accent { height:5px; background:#FF6600; border-radius:99px; margin:0 0 18px; }
+.fx-note { background:#f6f3fa; border-left:4px solid #FF6600; padding:10px 14px; border-radius:6px; }
+div.stButton > button[kind="primary"] { background:#4D148C; border-color:#4D148C; }
+div.stButton > button[kind="primary"]:hover { background:#FF6600; border-color:#FF6600; }
+[data-testid="stMetricValue"] { color:#4D148C; }
+</style>
+""", unsafe_allow_html=True)
 
+<div class="fx-header"><h1>Intelligent Parcel Network Control Tower</h1><p>Predictive demand · capacity-aware optimization · disruption resilience · multi-stop parcel consolidation</p></div>
+<div class="fx-accent"></div>
 def get(path, timeout=15):
     return requests.get(f"{API_URL}{path}", headers=HEADERS, timeout=timeout)
 
