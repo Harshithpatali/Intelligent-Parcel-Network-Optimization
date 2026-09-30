@@ -26,14 +26,14 @@ class ConsolidatedRouteConfig:
     # Real-world physical constraints.
     max_weight_kg: float = 12000.0
     max_volume_m3: float = 65.0
-    loading_minutes: float = 30.0
+    loading_minutes: float = 0.0
     unloading_minutes_per_parcel: float = 0.5
-    driver_break_hours: float = 0.5
+    driver_break_hours: float = 0.0
     return_to_origin: bool = False
     empty_return_factor: float = 0.35
     max_detour_pct: float = 25.0
     max_time_detour_pct: float = 25.0
-    min_capacity_utilization: float = 0.60
+    min_capacity_utilization: float = 0.0
 
     # Operational control rules.
     origin_cutoff_hour: float = 18.0
