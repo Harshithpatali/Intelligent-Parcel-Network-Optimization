@@ -384,3 +384,23 @@ def test_consolidated_routing_rejects_dominated_stop_order():
     assert routes.iloc[0]["destination_hubs"] == ["C", "B"]
     assert routes.iloc[0]["distance_detour_pct"] == pytest.approx(0.0)
     assert routes.iloc[0]["time_detour_pct"] == pytest.approx(0.0)
+
+
+
+def test_optimizer_accepts_string_hub_ids():
+    demand = pd.DataFrame([
+        {"origin_hub": "H01", "destination_hub": "H02", "parcel_count": 10},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": "H01", "capacity_parcels": 100},
+        {"hub_id": "H02", "capacity_parcels": 100},
+    ])
+    fleet = pd.DataFrame([{
+        "vehicle_type": "default", "vehicle_count": 2, "parcel_capacity": 40,
+        "operating_hours_per_day": 12.0, "fixed_trip_cost": 25.0,
+        "cost_per_km": 0.10, "max_trip_hours": 12.0
+    }])
+    flows, metrics = solve_network(demand, hubs, fleet=fleet)
+    assert metrics["unmet_demand"] == pytest.approx(0.0)
+    assert flows.iloc[0]["origin_hub"] == "H01"
+    assert flows.iloc[0]["destination_hub"] == "H02"
