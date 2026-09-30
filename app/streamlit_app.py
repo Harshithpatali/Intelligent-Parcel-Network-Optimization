@@ -190,6 +190,11 @@ with t6:
     max_stops = c.number_input("Max stops", min_value=1, max_value=15, value=5, step=1)
     demand_multiplier = d.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05)
     cost_per_km = e.number_input("Cost / km", min_value=0.0, value=0.075, step=0.005, format="%.3f")
+    w1, w2 = st.columns(2)
+    distance_weight = w1.slider("Distance weight", 0.0, 1.0, 0.5, 0.05)
+    time_weight = w2.slider("Time weight", 0.0, 1.0, 0.5, 0.05)
+    if distance_weight + time_weight <= 0:
+        st.error("At least one distance/time weight must be positive.")
 
     if st.button("Build consolidated routes", type="primary"):
         payload = {
@@ -199,6 +204,8 @@ with t6:
             "demand_multiplier": float(demand_multiplier),
             "fixed_trip_cost": 45.0,
             "cost_per_km": float(cost_per_km),
+            "distance_weight": float(distance_weight),
+            "time_weight": float(time_weight),
         }
         r = post("/routing", payload, timeout=120)
 
