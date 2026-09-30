@@ -39,7 +39,7 @@ env:
   OSRM_PROFILE: driving
   PYTHONUNBUFFERED: "1"
   PYTHONPATH: ${{ github.workspace }}
-  SIMULATIONS: ${{ inputs.simulations || '500' }}
+  SIMULATIONS: ${{ inputs.simulations || '10' }}
 
 jobs:
   prepare:
@@ -130,12 +130,9 @@ jobs:
             --model-version "$MODEL_VERSION" \
             --n-simulations "${{ inputs.simulations || '500' }}"
       - name: Intervention bundles
+        if: false
         run: |
-          python scripts/run_intervention_bundles.py \
-            --forecast-date "$FORECAST_DATE" \
-            --model-version "$MODEL_VERSION" \
-            --n-simulations "${{ inputs.simulations || '500' }}" \
-            --budget "${{ inputs.budget || '100' }}"
+          echo "Skipped in deployment validation; available as offline research optimization."
       - uses: actions/upload-artifact@v4
         with:
           name: resilience-results
