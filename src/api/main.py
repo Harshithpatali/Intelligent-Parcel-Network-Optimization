@@ -52,7 +52,18 @@ def summary():
  data,prod=api_get_data(); return {'orders_demo':int(len(demo_parcels)),'demand_rows':int(len(data['demand'])),'hubs':int(len(data['hubs'])),'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version'],'optimizer_version':OPTIMIZER_VERSION}
 @app.get('/network')
 def network():
- data,prod=api_get_data(); return {'hubs':data['hubs'].to_dict(orient='records'),'routes':int(len(data['cost'])),'demand_rows':int(len(data['demand'])),'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version'],'optimizer_version':OPTIMIZER_VERSION}
+ data,prod=api_get_data()
+ fleet=data['fleet']
+ return {
+  'hubs':data['hubs'].to_dict(orient='records'),
+  'routes':int(len(data['cost'])),
+  'demand_rows':int(len(data['demand'])),
+  'production_mode':prod,
+  'forecast_date':data['forecast_date'],
+  'model_version':data['model_version'],
+  'optimizer_version':OPTIMIZER_VERSION,
+  'fleet':fleet.to_dict(orient='records'),
+ }
 @app.post('/forecast')
 def forecast(req:ForecastRequest):
  if APP_ENV.lower() in {'production','prod'}:
