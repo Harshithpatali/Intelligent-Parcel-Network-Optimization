@@ -16,7 +16,7 @@ Hub 1 -> Hub 7: 12
 
 ## Method
 
-The planner uses the existing Olist-calibrated 20-hub network and the real road-network distance/time matrix.
+The planner uses the existing Olist-calibrated 20-hub network, the real road-network distance/time matrix, and the production linehaul fleet availability.
 
 For each origin hub:
 
@@ -27,8 +27,9 @@ For each origin hub:
    - vehicle capacity
    - maximum route hours
    - maximum stops
-5. Repeat until all feasible demand is assigned.
-6. Compare consolidated route cost with direct OD dispatch cost.
+5. Respect the available linehaul fleet-hour budget; excess demand becomes explicitly unmet.
+6. Repeat until all feasible demand is assigned.
+7. Compare consolidated route cost with direct OD dispatch cost.
 
 The objective is operationally interpretable:
 
@@ -55,6 +56,7 @@ Default configuration:
 - vehicle capacity: 40 parcels
 - maximum route time: 16 hours
 - maximum stops: 5
+- linehaul fleet: read from `logistics_fleet` (`linehaul_truck`)
 - fixed trip cost: 45
 - cost per km: 0.075
 
