@@ -27,7 +27,7 @@ class ConsolidatedRouteConfig:
     max_weight_kg: float = 12000.0
     max_volume_m3: float = 65.0
     loading_minutes: float = 0.0
-    unloading_minutes_per_parcel: float = 0.5
+    unloading_minutes_per_parcel: float = 0.0
     driver_break_hours: float = 0.0
     return_to_origin: bool = False
     empty_return_factor: float = 0.35
