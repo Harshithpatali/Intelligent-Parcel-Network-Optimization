@@ -277,7 +277,12 @@ def _build_route(
         "distance_detour_pct": sequence_result["distance_detour_pct"],
         "time_detour_pct": sequence_result["time_detour_pct"],
         "detour_score": sequence_result["detour_score"],
-        "transport_cost": config.fixed_trip_cost + config.cost_per_km * sequence_result["distance_km"],
+        "economic_ratio": sequence_result["economic_ratio"],
+        "direct_dispatch_cost": sequence_result["direct_dispatch_cost"],
+        "estimated_savings": sequence_result["estimated_savings"],
+        "estimated_savings_pct": sequence_result["estimated_savings_pct"],
+        "service_time_minutes_per_stop": config.service_time_minutes_per_stop,
+        "transport_cost": sequence_result["transport_cost"],
         "capacity_utilization": load / float(config.parcel_capacity),
         "vehicle_type": config.vehicle_type,
     }
