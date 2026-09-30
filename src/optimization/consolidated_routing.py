@@ -145,34 +145,39 @@ def _direct_baseline(origin, stops, lookup):
 
 
 def _detour_evaluation(origin, sequence, lookup, config):
-    """Evaluate a sequence against independent direct dispatches."""
+    """Evaluate route distance, time, and economic efficiency."""
     route = _sequence_metrics(origin, sequence, lookup)
     baseline = _direct_baseline(origin, sequence, lookup)
     if route is None or baseline is None:
         return None
-    route_distance, route_time = route
-    base_distance, base_time = baseline
+    route_distance, route_drive_time = route
+    base_distance, base_drive_time = baseline
+    route_time = route_drive_time + (config.service_time_minutes_per_stop / 60.0) * len(sequence)
+    base_time = base_drive_time + (config.service_time_minutes_per_stop / 60.0) * len(sequence)
     distance_ratio = route_distance / max(base_distance, 1e-9)
     time_ratio = route_time / max(base_time, 1e-9)
-    dominated = (
-        distance_ratio >= 1.0 - 1e-9
-        and time_ratio >= 1.0 - 1e-9
-        and (distance_ratio > 1.0 + 1e-9 or time_ratio > 1.0 + 1e-9)
-    )
-    score = config.distance_weight * distance_ratio + config.time_weight * time_ratio
+    direct_cost = len(sequence) * config.fixed_trip_cost + config.cost_per_km * base_distance
+    route_cost = config.fixed_trip_cost + config.cost_per_km * route_distance
+    economic_ratio = route_cost / max(direct_cost, 1e-9)
+    savings = direct_cost - route_cost
+    score = (config.distance_weight * distance_ratio + config.time_weight * time_ratio + config.economic_weight * economic_ratio)
     return {
         "distance_km": route_distance,
         "travel_time_hours": route_time,
+        "drive_time_hours": route_drive_time,
         "baseline_distance_km": base_distance,
         "baseline_time_hours": base_time,
         "distance_ratio": distance_ratio,
         "time_ratio": time_ratio,
+        "economic_ratio": economic_ratio,
+        "direct_dispatch_cost": direct_cost,
+        "transport_cost": route_cost,
+        "estimated_savings": savings,
+        "estimated_savings_pct": 100.0 * savings / max(direct_cost, 1e-9),
         "distance_detour_pct": (distance_ratio - 1.0) * 100.0,
         "time_detour_pct": (time_ratio - 1.0) * 100.0,
         "detour_score": score,
-        "dominated": dominated,
     }
-
 
 def _best_stop_sequence(origin, stops, lookup, config):
     """Choose a feasible non-dominated ordering using distance and time."""
