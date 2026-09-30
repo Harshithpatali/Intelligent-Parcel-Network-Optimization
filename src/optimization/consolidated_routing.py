@@ -16,8 +16,10 @@ class ConsolidatedRouteConfig:
     max_stops: int = 5
     vehicle_count: int = 10
     operating_hours_per_day: float = 16.0
-    distance_weight: float = 0.5
-    time_weight: float = 0.5
+    distance_weight: float = 0.4
+    time_weight: float = 0.4
+    economic_weight: float = 0.2
+    service_time_minutes_per_stop: float = 15.0
 
 
 def _route_lookup(cost: pd.DataFrame) -> dict[tuple[object, object], dict[str, float]]:
@@ -33,7 +35,7 @@ def _route_lookup(cost: pd.DataFrame) -> dict[tuple[object, object], dict[str, f
 
     lookup: dict[tuple[object, object], dict[str, float]] = {}
     for row in cost.itertuples(index=False):
-        lookup[(row.origin_hub, row.destination_hub)] = {
+        lookup[(_hub_key(row.origin_hub), _hub_key(row.destination_hub))] = {
             "distance_km": float(row.distance_km),
             "travel_time_hours": float(row.travel_time_hours),
         }
@@ -50,8 +52,14 @@ def _chunks(quantity: float, capacity: int) -> list[float]:
     return out
 
 
+def _hub_key(value):
+    if pd.isna(value):
+        return "<NA>"
+    return str(value).strip()
+
+
 def _travel(lookup, origin, destination):
-    return lookup.get((origin, destination))
+    return lookup.get((_hub_key(origin), _hub_key(destination)))
 
 
 
@@ -301,8 +309,10 @@ def build_consolidated_routes(
         raise ValueError("Route capacity, stop limit, and route hours must be positive")
     if config.vehicle_count <= 0 or config.operating_hours_per_day <= 0:
         raise ValueError("Vehicle count and operating hours must be positive")
-    if config.distance_weight < 0 or config.time_weight < 0 or config.distance_weight + config.time_weight <= 0:
-        raise ValueError("Distance/time weights must be non-negative and not both zero")
+    if (config.distance_weight < 0 or config.time_weight < 0 or config.economic_weight < 0 or config.distance_weight + config.time_weight + config.economic_weight <= 0):
+        raise ValueError("Route weights must be non-negative and not all zero")
+    if config.service_time_minutes_per_stop < 0:
+        raise ValueError("Service time per stop cannot be negative")
 
     required = {"origin_hub", "destination_hub", "parcel_count"}
     missing = required - set(demand.columns)
@@ -331,10 +341,9 @@ def build_consolidated_routes(
             quantity = float(row.parcel_count)
             if quantity <= 0:
                 continue
-            if origin == destination:
-                # Same-hub demand is local handling, not a linehaul trip.
+            if _hub_key(origin) == _hub_key(destination):
                 continue
-            if (origin, destination) not in lookup:
+            if (_hub_key(origin), _hub_key(destination)) not in lookup:
                 unmet.append(
                     {
                         "origin_hub": origin,
@@ -345,7 +354,7 @@ def build_consolidated_routes(
                 )
                 continue
 
-            leg = lookup[(origin, destination)]
+            leg = lookup[(_hub_key(origin), _hub_key(destination))]
             if leg["travel_time_hours"] > config.max_route_hours:
                 unmet.append(
                     {
