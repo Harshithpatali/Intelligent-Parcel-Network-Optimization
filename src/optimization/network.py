@@ -100,9 +100,13 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     if pywraplp is None:
         raise RuntimeError("OR-Tools is required for the fleet-constrained optimizer")
 
-    solver = pywraplp.Solver.CreateSolver("SCIP")
+    # CBC is deterministic and available in standard OR-Tools distributions.
+    # Fall back to SCIP when CBC is not packaged by the runtime.
+    solver = pywraplp.Solver.CreateSolver("CBC_MIXED_INTEGER_PROGRAMMING")
     if not solver:
-        raise RuntimeError("OR-Tools SCIP solver unavailable")
+        solver = pywraplp.Solver.CreateSolver("SCIP")
+    if not solver:
+        raise RuntimeError("No supported OR-Tools mixed-integer solver is available")
 
     # Keep every demand route. If a route is absent because of a hub/road
     # disruption, its demand must remain in the denominator and become unmet.
@@ -130,7 +134,8 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         route_vars = []
         route_key = (_hub_key(o), _hub_key(j))
         if route_key not in route:
-            solver.Add(u[(o, j)] >= q)
+            # No road arc exists: the entire OD demand is explicitly unmet.
+            solver.Add(u[(o, j)] == q)
             continue
         for fi, fr in fleet.iterrows():
             vt = str(fr.vehicle_type)
@@ -153,6 +158,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             # Demand is conserved exactly: every parcel is either assigned to
             # a feasible vehicle trip or explicitly recorded as unmet.
             solver.Add(sum(route_vars) + u[(o, j)] == q)
+            solver.Add(u[(o, j)] <= q)
 
     # Fleet hours are shared across the network: a vehicle cannot be counted on
     # multiple OD routes simultaneously.
@@ -251,7 +257,13 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     out = pd.DataFrame(rows)
     total_requested = float(d.parcel_count.sum())
     total_unmet = float(sum(u[k].solution_value() for k in u))
-    total_served_network = float(out["parcels"].sum()) if not out.empty else 0.0
+    # The conservation equations are the authoritative source for service;
+    # this remains correct even when a solver/runtime returns a numerically
+    # sparse x-variable representation.
+    total_served_network = max(
+        float(d["parcel_count"].sum()) - local_parcels - total_unmet,
+        0.0,
+    )
     total_cost = float(out.transport_cost.sum()) if not out.empty else 0.0
     service = (local_parcels + total_served_network) / max(total_requested, 1.0)
 
@@ -262,7 +274,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         "service_level": service,
         "service_level_target": service_level_target,
         "objective_with_unmet_penalty": total_cost + total_unmet * UNMET_PENALTY,
-        "total_parcels": local_parcels + total_served_network,
+        "total_parcels": max(total_requested - total_unmet, 0.0),
         "network_served_parcels": total_served_network,
         "local_parcels_assumed_served": local_parcels,
         "fleet_vehicle_types": int(fleet.vehicle_type.nunique()),
