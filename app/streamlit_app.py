@@ -253,7 +253,7 @@ with t1:
                         xaxis_title="Longitude",
                         yaxis_title="Latitude",
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 except (ValueError, TypeError, KeyError) as exc:
                     st.warning(
                         "The production hub coordinates could not be plotted. "
@@ -269,20 +269,20 @@ with t1:
             fleet_df = pd.DataFrame(network.get("fleet", []))
             if not fleet_df.empty:
                 st.markdown("#### Fleet profile")
-                st.dataframe(fleet_df, use_container_width=True, hide_index=True)
+                st.dataframe(fleet_df, width="stretch", hide_index=True)
             st.markdown("#### Candidate hubs")
             st.dataframe(
                 hubs[["hub_id", "city", "capacity_parcels", "handling_capacity"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
 with t2:
     a, b, c = st.columns(3)
-    surge = a.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05)
-    cap = b.slider("Capacity multiplier", 0.5, 3.0, 1.0, 0.05)
-    service = c.slider("Service target", 0.80, 0.99, 0.95, 0.01)
-    if st.button("Run optimization", type="primary"):
+    surge = a.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05, key="optimization_demand_multiplier")
+    cap = b.slider("Capacity multiplier", 0.5, 3.0, 1.0, 0.05, key="optimization_capacity_multiplier")
+    service = c.slider("Service target", 0.80, 0.99, 0.95, 0.01, key="optimization_service_target")
+    if st.button("Run optimization", type="primary", key="run_optimization"):
         r = post(
             "/optimize",
             {
@@ -299,7 +299,7 @@ with t2:
             z.metric("Transport cost", f"{m['total_transport_cost']:.2f}")
             st.dataframe(
                 pd.DataFrame(r.json()["flows"]),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             st.caption(
@@ -320,8 +320,9 @@ with t2:
             "road_disruption",
             "combined",
         ],
+    , key="disruption_scenario"
     )
-    if st.button("Run disruption"):
+    if st.button("Run disruption", key="run_disruption"):
         r = post("/scenario", {"scenario": scenario})
         if r.ok:
             body = r.json()
@@ -334,7 +335,7 @@ with t3:
         r = get("/resilience")
         if r.ok:
             risk = r.json()["risk_summary"]
-            st.dataframe(pd.DataFrame(risk), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(risk), width="stretch", hide_index=True)
         else:
             st.error(r.text)
     else:
@@ -345,7 +346,7 @@ with t4:
         r = get("/root-cause")
         if r.ok:
             rc = pd.DataFrame(r.json()["rows"])
-            st.dataframe(rc, use_container_width=True, hide_index=True)
+            st.dataframe(rc, width="stretch", hide_index=True)
             if not rc.empty and "analysis_type" in rc.columns:
                 grouped = rc[rc["analysis_type"] == "grouped_factor"].copy()
                 if not grouped.empty:
@@ -356,7 +357,7 @@ with t4:
                             y="contribution_score",
                             title="Service-level contribution by disruption factor",
                         ),
-                        use_container_width=True,
+                        width="stretch",
                     )
         else:
             st.error(r.text)
@@ -368,7 +369,7 @@ with t5:
         r = get("/interventions")
         if r.ok:
             it = pd.DataFrame(r.json().get("rows", []))
-            st.dataframe(it, use_container_width=True, hide_index=True)
+            st.dataframe(it, width="stretch", hide_index=True)
             if not it.empty:
                 required_chart_cols = {
                     "intervention_cost",
@@ -391,7 +392,7 @@ with t5:
                                 hover_data=hover_cols,
                                 title="Intervention cost vs reliability",
                             ),
-                            use_container_width=True,
+                            width="stretch",
                         )
                 else:
                     st.info("Intervention results loaded, but the reliability chart fields are not available in this run.")
@@ -416,7 +417,7 @@ with t6:
     if not fleet_df.empty and "vehicle_type" in fleet_df.columns:
         vehicle_options += list(fleet_df["vehicle_type"].astype(str).drop_duplicates())
 
-    vehicle_type = st.selectbox("Vehicle type", vehicle_options, index=1 if len(vehicle_options) > 1 else 0)
+    vehicle_type = st.selectbox("Vehicle type", vehicle_options, index=1 if len(vehicle_options) > 1 else 0, key="routing_vehicle_type")
     selected = fleet_df[fleet_df["vehicle_type"].astype(str).eq(vehicle_type)].head(1) if vehicle_type != "any" else pd.DataFrame()
 
     default_capacity = int(selected.iloc[0]["parcel_capacity"]) if not selected.empty else 40
@@ -431,39 +432,39 @@ with t6:
     )
 
     c1, c2, c3, c4 = st.columns(4)
-    parcel_capacity = c1.number_input("Parcel capacity", min_value=1, max_value=500, value=default_capacity, step=1)
-    max_route_hours = c2.number_input("Max route hours", min_value=1.0, max_value=72.0, value=default_hours, step=1.0)
-    max_stops = c3.number_input("Max stops", min_value=1, max_value=15, value=5, step=1)
-    demand_multiplier = c4.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05)
+    parcel_capacity = c1.number_input("Parcel capacity", min_value=1, max_value=500, value=default_capacity, step=1, key="routing_parcel_capacity")
+    max_route_hours = c2.number_input("Max route hours", min_value=1.0, max_value=72.0, value=default_hours, step=1.0, key="routing_max_route_hours")
+    max_stops = c3.number_input("Max stops", min_value=1, max_value=15, value=5, step=1, key="routing_max_stops")
+    demand_multiplier = c4.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05, key="routing_demand_multiplier")
 
     c1, c2, c3, c4 = st.columns(4)
-    max_weight_kg = c1.number_input("Max weight (kg)", min_value=100.0, value=12000.0, step=250.0)
-    max_volume_m3 = c2.number_input("Max volume (m³)", min_value=1.0, value=65.0, step=1.0)
-    service_time = c3.number_input("Service min / stop", min_value=0.0, max_value=180.0, value=15.0, step=5.0)
-    min_util = c4.slider("Minimum load factor", 0.0, 1.0, 0.60, 0.05)
+    max_weight_kg = c1.number_input("Max weight (kg)", min_value=100.0, value=12000.0, step=250.0, key="routing_max_weight")
+    max_volume_m3 = c2.number_input("Max volume (m³)", min_value=1.0, value=65.0, step=1.0, key="routing_max_volume")
+    service_time = c3.number_input("Service min / stop", min_value=0.0, max_value=180.0, value=15.0, step=5.0, key="routing_service_time")
+    min_util = c4.slider("Minimum load factor", 0.0, 1.0, 0.60, 0.05, key="routing_min_utilization")
 
     c1, c2, c3, c4 = st.columns(4)
-    return_to_origin = c1.checkbox("Return to origin", value=False)
-    driver_break = c2.number_input("Driver break (h)", min_value=0.0, max_value=4.0, value=0.5, step=0.25)
-    loading_minutes = c3.number_input("Loading (min)", min_value=0.0, max_value=240.0, value=30.0, step=5.0)
-    unloading_minutes = c4.number_input("Unload min / parcel", min_value=0.0, max_value=10.0, value=0.5, step=0.1)
+    return_to_origin = c1.checkbox("Return to origin", value=False, key="routing_return_to_origin")
+    driver_break = c2.number_input("Driver break (h)", min_value=0.0, max_value=4.0, value=0.5, step=0.25, key="routing_driver_break")
+    loading_minutes = c3.number_input("Loading (min)", min_value=0.0, max_value=240.0, value=30.0, step=5.0, key="routing_loading")
+    unloading_minutes = c4.number_input("Unload min / parcel", min_value=0.0, max_value=10.0, value=0.5, step=0.1, key="routing_unloading")
 
     c1, c2, c3, c4 = st.columns(4)
-    max_detour = c1.slider("Max distance detour %", 0.0, 100.0, 25.0, 5.0)
-    max_time_detour = c2.slider("Max time detour %", 0.0, 100.0, 25.0, 5.0)
-    distance_weight = c3.slider("Distance weight", 0.0, 1.0, 0.4, 0.05)
-    time_weight = c4.slider("Time weight", 0.0, 1.0, 0.4, 0.05)
+    max_detour = c1.slider("Max distance detour %", 0.0, 100.0, 25.0, 5.0, key="routing_max_distance_detour")
+    max_time_detour = c2.slider("Max time detour %", 0.0, 100.0, 25.0, 5.0, key="routing_max_time_detour")
+    distance_weight = c3.slider("Distance weight", 0.0, 1.0, 0.4, 0.05, key="routing_distance_weight")
+    time_weight = c4.slider("Time weight", 0.0, 1.0, 0.4, 0.05, key="routing_time_weight")
 
     with st.expander("Advanced economics"):
-        fixed_trip_cost = st.number_input("Fixed trip cost", min_value=0.0, value=default_fixed, step=1.0)
-        cost_per_km = st.number_input("Cost / km", min_value=0.0, value=default_km, step=0.005, format="%.3f")
-        economic_weight = st.slider("Economic weight", 0.0, 1.0, 0.2, 0.05)
-        empty_return_factor = st.slider("Empty return cost factor", 0.0, 1.0, 0.35, 0.05)
+        fixed_trip_cost = st.number_input("Fixed trip cost", min_value=0.0, value=default_fixed, step=1.0, key="routing_fixed_trip_cost")
+        cost_per_km = st.number_input("Cost / km", min_value=0.0, value=default_km, step=0.005, format="%.3f", key="routing_cost_per_km")
+        economic_weight = st.slider("Economic weight", 0.0, 1.0, 0.2, 0.05, key="routing_economic_weight")
+        empty_return_factor = st.slider("Empty return cost factor", 0.0, 1.0, 0.35, 0.05, key="routing_empty_return_factor")
 
     if distance_weight + time_weight + economic_weight <= 0:
         st.error("At least one route-scoring weight must be positive.")
 
-    if st.button("Build consolidated routes", type="primary"):
+    if st.button("Build consolidated routes", type="primary", key="build_consolidated_routes"):
         payload = {
             "vehicle_type": vehicle_type,
             "parcel_capacity": int(parcel_capacity),
@@ -613,7 +614,7 @@ with t6:
                     "transport_cost","estimated_savings","status",
                 ]
                 keep = [col for col in keep if col in display.columns]
-                st.dataframe(display[keep], use_container_width=True, hide_index=True)
+                st.dataframe(display[keep], width="stretch", hide_index=True)
             else:
                 st.markdown("### Network map")
                 st.caption("No feasible consolidated routes were returned. The live hub network remains visible so you can inspect the network before relaxing constraints.")
