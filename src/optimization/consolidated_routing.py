@@ -341,7 +341,8 @@ def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
         "weight_kg": total_weight,
         "volume_m3": total_volume,
         "distance_km": evaluation["distance_km"],
-        "travel_time_hours": route_hours,
+        "travel_time_hours": evaluation["travel_time_hours"],
+        "route_operational_hours": route_hours,
         "drive_time_hours": evaluation["drive_time_hours"],
         "baseline_distance_km": evaluation["baseline_distance_km"],
         "baseline_time_hours": evaluation["baseline_time_hours"],
@@ -552,7 +553,7 @@ def build_consolidated_routes(
                     continue
 
                 hours_left = fleet_hours_remaining[candidate.vehicle_type]
-                if route["travel_time_hours"] > hours_left + 1e-9:
+                if route["route_operational_hours"] > hours_left + 1e-9:
                     continue
 
                 candidate_routes.append(route)
@@ -578,7 +579,7 @@ def build_consolidated_routes(
                 ),
             )
             routes.append(chosen)
-            fleet_hours_remaining[chosen["vehicle_type"]] -= chosen["travel_time_hours"]
+            fleet_hours_remaining[chosen["vehicle_type"]] -= chosen["route_operational_hours"]
 
             # Reconcile the exact quantity served at each stop so partially used
             # chunks remain available for the next route.
