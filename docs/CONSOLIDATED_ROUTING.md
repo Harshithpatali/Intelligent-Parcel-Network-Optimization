@@ -90,3 +90,54 @@ This is a multi-stop linehaul consolidation layer, not a complete vehicle-routin
 - cross-origin vehicle repositioning
 
 Those can be added later without changing the upstream forecasting and resilience layers.
+
+
+## Distance + time optimal stop ordering
+
+For every multi-stop candidate, the planner evaluates feasible stop permutations rather than accepting the first greedy order.
+
+For two destinations (B) and (C) from origin (A), it explicitly compares:
+
+[
+A \rightarrow B \rightarrow C
+]
+
+against
+
+[
+A \rightarrow C \rightarrow B
+]
+
+The first route has:
+
+[
+D_{ABC}=D_{AB}+D_{BC}
+]
+
+and the alternative has:
+
+[
+D_{ACB}=D_{AC}+D_{CB}.
+]
+
+The same comparison is performed for travel time:
+
+[
+T_{ABC}=T_{AB}+T_{BC},
+qquad
+T_{ACB}=T_{AC}+T_{CB}.
+]
+
+Therefore, if the first ordering has both higher distance and higher travel time than another feasible ordering, it is rejected.
+
+For example, if (D_{AB}>D_{AC}) and the common (B-C) leg is unchanged, then:
+
+[
+D_{AB}+D_{BC} > D_{AC}+D_{BC},
+]
+
+so sending the truck to (B) before (C) is not the preferred ordering. The planner can instead use (A\rightarrow C\rightarrow B), provided its total route time remains feasible.
+
+For more than two stops, the same principle is generalized by evaluating feasible permutations of the small stop set. The current default of five stops means at most (5!=120) orderings are evaluated for a candidate route.
+
+The route must also satisfy the maximum route-time constraint and available fleet-hour budget.
