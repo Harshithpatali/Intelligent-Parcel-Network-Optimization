@@ -318,61 +318,97 @@ with t6:
                 st.caption("Unmet reasons: " + ", ".join(f"{k}={v:.0f}" for k,v in metrics["unmet_reasons"].items()))
 
             if not routes.empty:
-                coord = {row.hub_id: (float(row.lat), float(row.lng)) for row in hubs.itertuples()}
-                fmap = folium.Map(
-                    location=[float(hubs["lat"].mean()), float(hubs["lng"].mean())],
-                    zoom_start=4,
-                    control_scale=True,
-                    tiles="CartoDB positron",
-                )
+                coord = {str(row.hub_id): (float(row.lat), float(row.lng)) for row in hubs.itertuples() if pd.notna(row.lat) and pd.notna(row.lng)}
+                if coord:
+                    fmap = folium.Map(
+                        location=[sum(v[0] for v in coord.values()) / len(coord), sum(v[1] for v in coord.values()) / len(coord)],
+                        zoom_start=5,
+                        control_scale=True,
+                        tiles="CartoDB positron",
+                    )
+                    folium.TileLayer("OpenStreetMap", name="Road map", control=True).add_to(fmap)
 
-                palette = ["#4D148C", "#FF6600", "#6B2BA8", "#D95700", "#7E57C2", "#E87500", "#3F0D73", "#C44D00"]
-                for row in hubs.itertuples():
-                    folium.CircleMarker(
-                        location=[float(row.lat), float(row.lng)],
-                        radius=6,
-                        fill=True,
-                        fill_opacity=.9,
-                        color="#4D148C",
-                        fill_color="#4D148C",
-                        tooltip=f"Hub {row.hub_id} · {row.city}",
-                    ).add_to(fmap)
+                    palette = ["#4D148C", "#FF6600", "#6B2BA8", "#D95700", "#7E57C2", "#E87500", "#3F0D73", "#C44D00"]
 
-                for idx, row in routes.iterrows():
-                    sequence = [row["origin_hub"]] + list(row["destination_hubs"])
-                    points = [coord[h] for h in sequence if h in coord]
-                    folium.PolyLine(
-                        points,
-                        color=palette[idx % len(palette)],
-                        weight=5,
-                        opacity=.80,
-                        tooltip=f"R{int(row['route_id'])} · {int(row['parcels'])} parcels · {int(row['stops'])} stops",
-                        popup=(
-                            f"<b>Route {int(row['route_id'])}</b><br>"
-                            f"Vehicle: {row.get('vehicle_type','n/a')}<br>"
-                            f"Stops: {int(row['stops'])}<br>"
-                            f"Parcels: {row['parcels']:.1f}<br>"
-                            f"Weight: {row.get('weight_kg',0):.1f} kg ({row.get('weight_utilization',0):.1%})<br>"
-                            f"Cube: {row.get('volume_m3',0):.2f} m³ ({row.get('volume_utilization',0):.1%})<br>"
-                            f"Distance: {row['distance_km']:.1f} km<br>"
-                            f"Travel + ops: {row['travel_time_hours']:.1f} h<br>"
-                            f"Detour: {row.get('distance_detour_pct',0):.1f}% distance / {row.get('time_detour_pct',0):.1f}% time<br>"
-                            f"Modeled cost: {row['transport_cost']:.2f}<br>"
-                            f"Savings vs direct: {row.get('estimated_savings',0):.2f}"
-                        ),
-                    ).add_to(fmap)
+                    # Always show the physical network, even before a routing run.
+                    for hub_id, (lat, lon) in coord.items():
+                        hub_row = hubs[hubs["hub_id"].astype(str).eq(hub_id)].iloc[0]
+                        folium.CircleMarker(
+                            location=[lat, lon],
+                            radius=9,
+                            fill=True,
+                            fill_opacity=.95,
+                            color="#4D148C",
+                            fill_color="#4D148C",
+                            tooltip=f"Hub {hub_id} · {hub_row.get('city','')}",
+                            popup=(
+                                f"<b>{hub_id} · {hub_row.get('city','')}</b><br>"
+                                f"Capacity: {float(hub_row.get('capacity_parcels',0)):,.0f} parcels<br>"
+                                f"Handling: {float(hub_row.get('handling_capacity',0)):,.0f}"
+                            ),
+                        ).add_to(fmap)
 
-                    for stop_no, hub_id in enumerate(sequence, 1):
-                        if hub_id in coord:
-                            folium.Marker(
-                                coord[hub_id],
-                                tooltip=f"R{int(row['route_id'])} · stop {stop_no} · hub {hub_id}",
-                                icon=folium.DivIcon(
-                                    html=f'<div style="font-size:10px;color:#4D148C;font-weight:700;background:white;border:1px solid #4D148C;border-radius:10px;padding:1px 4px;">{stop_no}</div>'
-                                ),
-                            ).add_to(fmap)
+                    # Draw optimized routes over the network. OSRM road geometry
+                    # is used when available; straight hub connectors are only a fallback.
+                    for idx, row in routes.iterrows():
+                        sequence = [str(row["origin_hub"])] + [str(x) for x in row["destination_hubs"]]
+                        route_points = []
+                        for a, b in zip(sequence[:-1], sequence[1:]):
+                            if a not in coord or b not in coord:
+                                continue
+                            geometry = None
+                            try:
+                                lonlat = f"{coord[a][1]},{coord[a][0]};{coord[b][1]},{coord[b][0]}"
+                                rr = requests.get(
+                                    "https://router.project-osrm.org/route/v1/driving/" + lonlat,
+                                    params={"overview": "full", "geometries": "geojson", "steps": "false"},
+                                    timeout=12,
+                                )
+                                if rr.ok:
+                                    geometry = rr.json().get("routes", [{}])[0].get("geometry", {}).get("coordinates")
+                            except Exception:
+                                geometry = None
 
-                components.html(fmap.get_root().render(), height=720, scrolling=False)
+                            if geometry:
+                                route_points.extend([(float(lat), float(lon)) for lon, lat in geometry])
+                            else:
+                                route_points.extend([coord[a], coord[b]])
+
+                        folium.PolyLine(
+                            route_points,
+                            color=palette[idx % len(palette)],
+                            weight=6,
+                            opacity=.9,
+                            tooltip=f"R{int(row['route_id'])} · {int(row['parcels'])} parcels · {int(row['stops'])} stops",
+                            popup=(
+                                f"<b>Route {int(row['route_id'])}</b><br>"
+                                f"Vehicle: {row.get('vehicle_type','n/a')}<br>"
+                                f"Stops: {int(row['stops'])}<br>"
+                                f"Parcels: {row['parcels']:.1f}<br>"
+                                f"Weight: {row.get('weight_kg',0):.1f} kg ({row.get('weight_utilization',0):.1%})<br>"
+                                f"Cube: {row.get('volume_m3',0):.2f} m³ ({row.get('volume_utilization',0):.1%})<br>"
+                                f"Distance: {row['distance_km']:.1f} km<br>"
+                                f"Travel + ops: {row['travel_time_hours']:.1f} h<br>"
+                                f"Detour: {row.get('distance_detour_pct',0):.1f}% distance / {row.get('time_detour_pct',0):.1f}% time<br>"
+                                f"Modeled cost: {row['transport_cost']:.2f}<br>"
+                                f"Savings vs direct: {row.get('estimated_savings',0):.2f}"
+                            ),
+                        ).add_to(fmap)
+
+                        for stop_no, hub_id in enumerate(sequence, 1):
+                            if hub_id in coord:
+                                folium.Marker(
+                                    coord[hub_id],
+                                    tooltip=f"R{int(row['route_id'])} · stop {stop_no} · hub {hub_id}",
+                                    icon=folium.DivIcon(
+                                        html=f'<div style="font-size:10px;color:#4D148C;font-weight:700;background:white;border:2px solid #FF6600;border-radius:10px;padding:2px 5px;">{stop_no}</div>'
+                                    ),
+                                ).add_to(fmap)
+
+                    folium.LayerControl().add_to(fmap)
+                    components.html(fmap.get_root().render(), height=760, scrolling=False)
+                else:
+                    st.warning("Hub coordinates are unavailable, so the operational map cannot be rendered.")
 
                 display = routes.copy()
                 display["destination_hubs"] = display["destination_hubs"].map(lambda xs: " → ".join(map(str, xs)))
