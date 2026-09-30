@@ -74,12 +74,18 @@ def routing(req:RoutingRequest):
   data,prod=api_get_data()
   d=data['demand'].copy()
   d['parcel_count']=(pd.to_numeric(d.parcel_count)*req.demand_multiplier).round()
+  linehaul=data['fleet']
+  linehaul=linehaul[linehaul['vehicle_type'].astype(str)=='linehaul_truck'].head(1) if linehaul is not None and not linehaul.empty else pd.DataFrame()
+  vehicle_count=int(linehaul.iloc[0]['vehicle_count']) if not linehaul.empty else 10
+  operating_hours=float(linehaul.iloc[0]['operating_hours_per_day']) if not linehaul.empty else 16.0
   cfg=ConsolidatedRouteConfig(
    parcel_capacity=req.parcel_capacity,
    max_route_hours=req.max_route_hours,
    max_stops=req.max_stops,
    fixed_trip_cost=req.fixed_trip_cost,
    cost_per_km=req.cost_per_km,
+   vehicle_count=vehicle_count,
+   operating_hours_per_day=operating_hours,
   )
   routes,m=build_consolidated_routes(d,data['hubs'],data['cost'],cfg)
   m.update({'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version']})
