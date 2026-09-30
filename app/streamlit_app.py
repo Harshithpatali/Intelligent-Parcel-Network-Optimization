@@ -27,8 +27,11 @@ div.stButton > button[kind="primary"]:hover { background:#FF6600; border-color:#
 </style>
 """, unsafe_allow_html=True)
 
-<div class="fx-header"><h1>Intelligent Parcel Network Control Tower</h1><p>Predictive demand · capacity-aware optimization · disruption resilience · multi-stop parcel consolidation</p></div>
+st.markdown("""
+<div class="fx-header"><h1>Intelligent Parcel Network Control Tower</h1>
+<p>Predictive demand · capacity-aware optimization · disruption resilience · multi-stop parcel consolidation</p></div>
 <div class="fx-accent"></div>
+""", unsafe_allow_html=True)
 def get(path, timeout=15):
     return requests.get(f"{API_URL}{path}", headers=HEADERS, timeout=timeout)
 
