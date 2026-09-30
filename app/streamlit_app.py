@@ -8,7 +8,7 @@ try:
 except Exception as e: st.error(f"API unavailable: {e}"); st.stop()
 prod=summary.get("production_mode",False)
 if prod: st.success(f"Production analytics connected · forecast {summary.get('forecast_date')} · model {summary.get('model_version')}")
-else: st.warning("Demo mode. Set APP_ENV=production and SUPABASE_SERVICE_ROLE_KEY for production analytics.")
+else: st.warning("Demo mode. Set ENVIRONMENT=production and configure the Supabase service-role key on the API backend.")
 hubs=pd.DataFrame(network["hubs"]); c1,c2,c3,c4=st.columns(4); c1.metric("Candidate hubs",summary["hubs"]); c2.metric("OD demand rows",summary["demand_rows"]); c3.metric("Routes",network.get("routes",0)); c4.metric("Mode","Production" if prod else "Demo")
 t1,t2,t3,t4,t5=st.tabs(["Network","Optimization","Resilience","Root Cause","Interventions"])
 with t1:
