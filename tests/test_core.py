@@ -346,3 +346,39 @@ def test_consolidated_routing_reorders_by_distance_and_time():
     assert routes.iloc[0]["destination_hubs"] == ["C", "B"]
     assert routes.iloc[0]["distance_km"] == pytest.approx(150.0)
     assert routes.iloc[0]["travel_time_hours"] == pytest.approx(3.0)
+
+
+
+def test_consolidated_routing_rejects_dominated_stop_order():
+    from src.optimization.consolidated_routing import (
+        ConsolidatedRouteConfig,
+        build_consolidated_routes,
+    )
+
+    demand = pd.DataFrame([
+        {"origin_hub": "A", "destination_hub": "B", "parcel_count": 15},
+        {"origin_hub": "A", "destination_hub": "C", "parcel_count": 15},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": "A", "lat": 0.0, "lng": 0.0},
+        {"hub_id": "B", "lat": 1.0, "lng": 1.0},
+        {"hub_id": "C", "lat": 2.0, "lng": 2.0},
+    ])
+    cost = pd.DataFrame([
+        {"origin_hub": "A", "destination_hub": "B", "distance_km": 100.0, "travel_time_hours": 5.0},
+        {"origin_hub": "B", "destination_hub": "C", "distance_km": 100.0, "travel_time_hours": 5.0},
+        {"origin_hub": "A", "destination_hub": "C", "distance_km": 50.0, "travel_time_hours": 2.0},
+        {"origin_hub": "C", "destination_hub": "B", "distance_km": 100.0, "travel_time_hours": 5.0},
+    ])
+
+    routes, _ = build_consolidated_routes(
+        demand,
+        hubs,
+        cost,
+        ConsolidatedRouteConfig(parcel_capacity=40, max_route_hours=16),
+    )
+
+    assert len(routes) == 1
+    assert routes.iloc[0]["destination_hubs"] == ["C", "B"]
+    assert routes.iloc[0]["distance_detour_pct"] < 0
+    assert routes.iloc[0]["time_detour_pct"] < 0
