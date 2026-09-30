@@ -17,7 +17,7 @@ on:
       simulations:
         description: "Monte Carlo simulations"
         required: true
-        default: "500"
+        default: "10"
       budget:
         description: "Intervention bundle budget"
         required: true
