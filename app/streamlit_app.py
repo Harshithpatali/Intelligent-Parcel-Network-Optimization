@@ -14,23 +14,115 @@ st.set_page_config(page_title="Parcel Network Control Tower", page_icon="📦", 
 
 st.markdown("""
 <style>
-:root { --fx-purple:#4D148C; --fx-orange:#FF6600; }
-.block-container { padding-top:1.4rem; padding-bottom:2rem; }
-.fx-header { background:linear-gradient(100deg,#4D148C 0%,#5d1aa0 72%,#FF6600 100%); border-radius:14px; padding:22px 28px; color:white; margin-bottom:10px; box-shadow:0 6px 22px rgba(77,20,140,.16); }
-.fx-header h1 { margin:0; font-size:2rem; letter-spacing:-.02em; }
-.fx-header p { margin:7px 0 0; opacity:.92; font-size:.95rem; }
-.fx-accent { height:5px; background:#FF6600; border-radius:99px; margin:0 0 18px; }
-.fx-note { background:#f6f3fa; border-left:4px solid #FF6600; padding:10px 14px; border-radius:6px; }
-div.stButton > button[kind="primary"] { background:#4D148C; border-color:#4D148C; }
-div.stButton > button[kind="primary"]:hover { background:#FF6600; border-color:#FF6600; }
-[data-testid="stMetricValue"] { color:#4D148C; }
+:root{
+  --fx-purple:#4D148C;
+  --fx-purple-2:#6F2DBD;
+  --fx-orange:#FF6600;
+  --ink:#171927;
+  --muted:#697083;
+  --surface:#FFFFFF;
+  --surface-2:#F7F7FA;
+  --line:#E8E8EF;
+  --success:#0E9F6E;
+}
+.stApp{
+  background:
+    radial-gradient(circle at 8% 0%, rgba(77,20,140,.07), transparent 28%),
+    radial-gradient(circle at 96% 4%, rgba(255,102,0,.055), transparent 24%),
+    #F5F6FA;
+}
+.block-container{max-width:1500px;padding:1.5rem 2.25rem 3rem;}
+header[data-testid="stHeader"]{background:transparent;}
+section[data-testid="stSidebar"]{background:#171927;border-right:1px solid rgba(255,255,255,.08);}
+section[data-testid="stSidebar"] *{color:#F5F3FA;}
+.fx-shell{
+  background:linear-gradient(115deg,#171927 0%,#28143F 54%,#4D148C 100%);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:24px;
+  padding:30px 34px 26px;
+  color:white;
+  box-shadow:0 18px 50px rgba(23,25,39,.18);
+  position:relative;
+  overflow:hidden;
+}
+.fx-shell:after{
+  content:"";position:absolute;right:-90px;top:-120px;width:330px;height:330px;
+  border:70px solid rgba(255,102,0,.12);border-radius:50%;
+}
+.fx-kicker{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;font-weight:800;color:#FFB58C;margin-bottom:9px;}
+.fx-shell h1{margin:0;font-size:2.35rem;line-height:1.05;letter-spacing:-.045em;font-weight:800;}
+.fx-shell p{margin:11px 0 0;color:rgba(255,255,255,.72);font-size:.96rem;}
+.fx-status{
+  display:inline-flex;align-items:center;gap:8px;margin-top:19px;
+  padding:7px 11px;border-radius:999px;background:rgba(255,255,255,.09);
+  border:1px solid rgba(255,255,255,.13);font-size:.76rem;font-weight:700;
+}
+.fx-dot{width:8px;height:8px;border-radius:50%;background:#28D17C;box-shadow:0 0 0 4px rgba(40,209,124,.12);}
+.fx-section{margin:25px 0 12px;}
+.fx-section-title{font-size:1.05rem;font-weight:800;color:var(--ink);letter-spacing:-.02em;}
+.fx-section-sub{font-size:.78rem;color:var(--muted);margin-top:3px;}
+.fx-card{
+  background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:16px;
+  padding:17px 18px;box-shadow:0 8px 28px rgba(23,25,39,.055);
+}
+.fx-card-label{font-size:.72rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.07em;}
+.fx-card-value{font-size:1.75rem;color:var(--ink);font-weight:800;letter-spacing:-.04em;margin-top:4px;}
+.fx-card-meta{font-size:.72rem;color:#8A90A0;margin-top:2px;}
+.fx-accent-line{height:4px;background:linear-gradient(90deg,#FF6600,#FF8A45,#4D148C);border-radius:99px;margin:12px 0 20px;}
+.fx-note{
+  background:linear-gradient(90deg,#F4EFFA,#FFF7F2);border:1px solid #E8DDF2;
+  border-left:4px solid var(--fx-orange);padding:12px 15px;border-radius:10px;color:#4B4F5D;
+}
+div[data-testid="stTabs"] > div:first-child{gap:5px;border-bottom:1px solid var(--line);}
+div[data-testid="stTabs"] button{
+  border:0!important;border-radius:10px 10px 0 0!important;
+  color:#707687!important;font-weight:700!important;padding:11px 15px!important;
+  background:transparent!important;
+}
+div[data-testid="stTabs"] button:hover{color:var(--fx-purple)!important;background:#F0EDF5!important;}
+div[data-testid="stTabs"] button[aria-selected="true"]{
+  color:var(--fx-purple)!important;background:#EEE8F5!important;
+  box-shadow:inset 0 -3px 0 var(--fx-orange)!important;
+}
+div.stButton > button{
+  border-radius:10px!important;font-weight:750!important;min-height:42px!important;
+  transition:all .15s ease!important;
+}
+div.stButton > button[kind="primary"]{
+  background:linear-gradient(100deg,#4D148C,#6F2DBD)!important;
+  border-color:#4D148C!important;color:white!important;
+  box-shadow:0 6px 18px rgba(77,20,140,.2)!important;
+}
+div.stButton > button[kind="primary"]:hover{
+  background:linear-gradient(100deg,#FF6600,#E94F00)!important;
+  border-color:#FF6600!important;transform:translateY(-1px);
+}
+div[data-testid="stMetric"]{
+  background:white;border:1px solid var(--line);border-radius:14px;padding:13px 15px;
+  box-shadow:0 6px 22px rgba(23,25,39,.045);
+}
+[data-testid="stMetricLabel"]{font-size:.72rem!important;text-transform:uppercase;letter-spacing:.06em;font-weight:700!important;color:#747B8D!important;}
+[data-testid="stMetricValue"]{color:var(--fx-purple)!important;font-weight:800!important;letter-spacing:-.04em;}
+[data-testid="stDataFrame"]{border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+div[data-baseweb="select"] > div, div[data-baseweb="input"] > div{
+  border-radius:9px!important;border-color:#DADCE5!important;
+}
+div[data-testid="stExpander"]{
+  border:1px solid var(--line);border-radius:12px;background:white;
+}
+hr{border-color:var(--line)!important;}
+.small-muted{font-size:.75rem;color:var(--muted);}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
-<div class="fx-header"><h1>Intelligent Parcel Network Control Tower</h1>
-<p>Predictive demand · capacity-aware optimization · disruption resilience · multi-stop parcel consolidation</p></div>
-<div class="fx-accent"></div>
+<div class="fx-shell">
+  <div class="fx-kicker">Parcel Intelligence Platform · Network Operations</div>
+  <h1>Intelligent Parcel Network<br>Control Tower</h1>
+  <p>Predictive demand · capacity-aware optimization · disruption resilience · multi-stop consolidation</p>
+  <div class="fx-status"><span class="fx-dot"></span> Network analytics online · decision layer ready</div>
+</div>
+<div class="fx-accent-line"></div>
 """, unsafe_allow_html=True)
 def get(path, timeout=15):
     return requests.get(f"{API_URL}{path}", headers=HEADERS, timeout=timeout)
@@ -59,14 +151,19 @@ else:
     )
 
 hubs = pd.DataFrame(network["hubs"])
+st.markdown('<div class="fx-section"><div class="fx-section-title">Network command summary</div><div class="fx-section-sub">Current model coverage and operational topology</div></div>', unsafe_allow_html=True)
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Candidate hubs", summary["hubs"])
-c2.metric("OD demand rows", summary["demand_rows"])
-c3.metric("Road routes", network.get("routes", 0))
-c4.metric("Mode", "Production" if prod else "Demo")
+cards = [
+    ("Candidate hubs", f"{summary['hubs']:,}", "network nodes"),
+    ("OD demand", f"{summary['demand_rows']:,}", "origin-destination rows"),
+    ("Road routes", f"{network.get('routes', 0):,}", "road-network links"),
+    ("Operating mode", "PRODUCTION" if prod else "DEMO", "data connection"),
+]
+for col, (label, value, meta) in zip((c1,c2,c3,c4), cards):
+    col.markdown(f'<div class="fx-card"><div class="fx-card-label">{label}</div><div class="fx-card-value">{value}</div><div class="fx-card-meta">{meta}</div></div>', unsafe_allow_html=True)
 
 t1, t2, t3, t4, t5, t6 = st.tabs(
-    ["Network", "Optimization", "Resilience", "Root Cause", "Interventions", "Routing"]
+    ["⌂  Network", "◈  Optimization", "◌  Resilience", "⌁  Root Cause", "✦  Interventions", "◉  Routing"]
 )
 
 with t1:
