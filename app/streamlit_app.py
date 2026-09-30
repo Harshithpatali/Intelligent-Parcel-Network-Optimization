@@ -70,19 +70,38 @@ t1, t2, t3, t4, t5, t6 = st.tabs(
 )
 
 with t1:
-    st.subheader("Candidate hub network")
-    center = [float(hubs["lat"].mean()), float(hubs["lng"].mean())]
-    fmap = folium.Map(location=center, zoom_start=4, control_scale=True)
-    for row in hubs.itertuples():
-        folium.CircleMarker(
-            location=[float(row.lat), float(row.lng)],
-            radius=7,
-            fill=True,
-            tooltip=f"Hub {row.hub_id} · capacity {row.capacity_parcels:.0f}",
-            popup=f"ZIP {row.representative_zip} · capacity {row.capacity_parcels:.0f}",
-        ).add_to(fmap)
-    components.html(fmap.get_root().render(), height=620, scrolling=False)
-    st.dataframe(hubs, use_container_width=True, hide_index=True)
+    st.subheader("Network overview")
+    st.markdown(
+        '<div class="fx-note">The operational route map is intentionally kept on the final Routing page. This view focuses on network structure, capacity and fleet assumptions.</div>',
+        unsafe_allow_html=True,
+    )
+    if not hubs.empty:
+        left, right = st.columns([1.5, 1])
+        with left:
+            st.plotly_chart(
+                px.scatter(
+                    hubs,
+                    x="lon",
+                    y="lat",
+                    size="capacity_parcels",
+                    text="hub_id",
+                    hover_name="city",
+                    title="Candidate hub capacity footprint",
+                    color_discrete_sequence=["#4D148C"],
+                ),
+                use_container_width=True,
+            )
+        with right:
+            fleet_df = pd.DataFrame(network.get("fleet", []))
+            if not fleet_df.empty:
+                st.markdown("#### Fleet profile")
+                st.dataframe(fleet_df, use_container_width=True, hide_index=True)
+            st.markdown("#### Candidate hubs")
+            st.dataframe(
+                hubs[["hub_id", "city", "capacity_parcels", "handling_capacity"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
 with t2:
     a, b, c = st.columns(3)
