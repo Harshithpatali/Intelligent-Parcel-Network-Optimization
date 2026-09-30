@@ -294,7 +294,7 @@ def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
     total_weight = 0.0
     total_volume = 0.0
     for destination, qty in zip(evaluation["sequence"], ordered_loads):
-        profile = parcel_profiles[_hub_key(destination)]
+        profile = parcel_profiles[(_hub_key(origin), _hub_key(destination))]
         total_weight += profile["avg_weight_kg"] * qty
         total_volume += profile["avg_volume_m3"] * qty
 
@@ -446,7 +446,8 @@ def build_consolidated_routes(
 
     parcel_profiles: dict[str, dict[str, float]] = {}
     for row in d.itertuples(index=False):
-        parcel_profiles[_hub_key(row.destination_hub)] = _parcel_profile(
+        key = (_hub_key(row.origin_hub), _hub_key(row.destination_hub))
+        parcel_profiles[key] = _parcel_profile(
             demand, row.origin_hub, row.destination_hub, float(row.parcel_count)
         )
 
