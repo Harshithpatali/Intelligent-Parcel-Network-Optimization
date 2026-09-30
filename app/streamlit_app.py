@@ -550,7 +550,7 @@ with t6:
             else:
                 st.markdown("### Network map")
                 st.caption("No feasible consolidated routes were returned. The live hub network remains visible so you can inspect the network before relaxing constraints.")
-                coord = {str(row.hub_id): (float(row.lat), float(row.lng)) for row in hubs.itertuples() if pd.notna(row.lat) and pd.notna(row.lng)}
+                coord = {str(row.hub_id): (float(row.lat), float(row.lon)) for row in hubs.itertuples() if pd.notna(row.lat) and pd.notna(row.lon)}
                 if coord:
                     fmap = folium.Map(
                         location=[sum(v[0] for v in coord.values()) / len(coord), sum(v[1] for v in coord.values()) / len(coord)],
