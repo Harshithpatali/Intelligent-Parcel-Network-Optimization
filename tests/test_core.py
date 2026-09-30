@@ -16,7 +16,7 @@ def test_forecast():
 def test_optimizer_reports_unmet_demand():
  demand,_,hubs=generate_demo(); d=demand.groupby(['origin_hub','destination_hub'],as_index=False).parcel_count.sum(); flows,metrics=solve_network(d,hubs,capacity_multiplier=.5); assert metrics['unmet_demand']>=0 and 'service_level' in metrics and len(flows)>0
 def test_api_smoke():
- assert client.get('/health').status_code==200; assert client.get('/ready').status_code==200; assert client.get('/network').status_code==200; assert client.get('/summary').status_code==200; assert client.post('/forecast',json={'days':30}).status_code==200; assert client.post('/optimize',json={'demand_multiplier':1.1,'capacity_multiplier':.9}).status_code==200; assert client.post('/scenario',json={'scenario':'combined'}).status_code==200; assert client.get('/metrics').status_code==200
+ assert client.get('/health').status_code==200; assert client.get('/ready').status_code==200; assert client.get('/network').status_code==200; assert client.get('/summary').status_code==200; assert client.post('/forecast',json={'days':30}).status_code==200; assert client.post('/optimize',json={'demand_multiplier':1.1,'capacity_multiplier':.9}).status_code==200; assert client.post('/scenario',json={'scenario':'combined'}).status_code==200; assert client.post('/routing',json={}).status_code==200; assert client.get('/metrics').status_code==200
 
 
 def test_scenario_construction_and_execution():
