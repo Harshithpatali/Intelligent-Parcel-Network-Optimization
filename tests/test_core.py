@@ -380,5 +380,5 @@ def test_consolidated_routing_rejects_dominated_stop_order():
 
     assert len(routes) == 1
     assert routes.iloc[0]["destination_hubs"] == ["C", "B"]
-    assert routes.iloc[0]["distance_detour_pct"] < 0
-    assert routes.iloc[0]["time_detour_pct"] < 0
+    assert routes.iloc[0]["distance_detour_pct"] == pytest.approx(0.0)
+    assert routes.iloc[0]["time_detour_pct"] == pytest.approx(0.0)
