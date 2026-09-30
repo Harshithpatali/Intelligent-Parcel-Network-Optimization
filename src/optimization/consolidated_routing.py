@@ -129,7 +129,8 @@ def _sequence_metrics(origin, sequence, lookup, config: ConsolidatedRouteConfig)
         config.loading_minutes / 60.0
         + len(sequence) * config.service_time_minutes_per_stop / 60.0
     )
-    return drive_distance, drive_hours, drive_hours + service_hours
+    operational_hours = drive_hours + service_hours
+    return drive_distance, drive_hours, operational_hours
 
 
 def _direct_baseline(origin, stops, lookup, config: ConsolidatedRouteConfig):
@@ -155,11 +156,12 @@ def _detour_evaluation(origin, sequence, lookup, config: ConsolidatedRouteConfig
     if route is None or baseline is None:
         return None
 
-    route_distance, route_drive_time, route_time = route
-    base_distance, base_drive_time, base_time = baseline
+    route_distance, route_drive_time, route_operational_hours = route
+    base_distance, base_drive_time, base_operational_hours = baseline
 
     distance_ratio = route_distance / max(base_distance, 1e-9)
-    time_ratio = route_time / max(base_time, 1e-9)
+    # Detour compares driving time, not loading/unloading/service overhead.
+    time_ratio = route_drive_time / max(base_drive_time, 1e-9)
 
     direct_cost = (
         len(sequence) * config.fixed_trip_cost
@@ -169,10 +171,12 @@ def _detour_evaluation(origin, sequence, lookup, config: ConsolidatedRouteConfig
 
     return {
         "distance_km": route_distance,
-        "travel_time_hours": route_time,
+        "travel_time_hours": route_drive_time,
+        "route_operational_hours": route_operational_hours,
         "drive_time_hours": route_drive_time,
         "baseline_distance_km": base_distance,
-        "baseline_time_hours": base_time,
+        "baseline_time_hours": base_drive_time,
+        "baseline_operational_hours": base_operational_hours,
         "distance_ratio": distance_ratio,
         "time_ratio": time_ratio,
         "direct_dispatch_cost": direct_cost,
@@ -300,7 +304,7 @@ def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
         total_volume += profile["avg_volume_m3"] * qty
 
     # Schedule clock is a relative operating-hours approximation.
-    route_hours = evaluation["travel_time_hours"] + config.driver_break_hours
+    route_hours = evaluation["route_operational_hours"] + config.driver_break_hours
     route_hours += config.staging_buffer_hours
 
     if config.return_to_origin:
@@ -310,14 +314,15 @@ def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
         route_hours += return_leg["travel_time_hours"]
         evaluation["distance_km"] += return_leg["distance_km"]
         evaluation["drive_time_hours"] += return_leg["travel_time_hours"]
-        evaluation["travel_time_hours"] = route_hours
+        evaluation["travel_time_hours"] = evaluation["drive_time_hours"]
+
         evaluation["transport_cost"] += (
             config.cost_per_km * return_leg["distance_km"] * config.empty_return_factor
         )
 
     unload_hours = parcels * config.unloading_minutes_per_parcel / 60.0
     route_hours += unload_hours
-    evaluation["travel_time_hours"] = route_hours
+    evaluation["travel_time_hours"] = evaluation["drive_time_hours"]
 
     if total_weight > config.max_weight_kg + 1e-9:
         return None
@@ -434,9 +439,13 @@ def build_consolidated_routes(
     if missing:
         raise ValueError(f"Demand missing columns: {sorted(missing)}")
 
-    d = demand.copy()
-    d["parcel_count"] = pd.to_numeric(d["parcel_count"], errors="coerce").fillna(0).clip(lower=0)
-    d = d.groupby(["origin_hub", "destination_hub"], as_index=False).parcel_count.sum()
+    raw_demand = demand.copy()
+    raw_demand["parcel_count"] = pd.to_numeric(
+        raw_demand["parcel_count"], errors="coerce"
+    ).fillna(0).clip(lower=0)
+    d = raw_demand.groupby(
+        ["origin_hub", "destination_hub"], as_index=False
+    ).parcel_count.sum()
     lookup = _route_lookup(cost)
 
     vehicle_configs = _vehicle_candidates(fleet, config)
@@ -449,7 +458,10 @@ def build_consolidated_routes(
     for row in d.itertuples(index=False):
         key = (_hub_key(row.origin_hub), _hub_key(row.destination_hub))
         parcel_profiles[key] = _parcel_profile(
-            demand, row.origin_hub, row.destination_hub, float(row.parcel_count)
+            raw_demand,
+            row.origin_hub,
+            row.destination_hub,
+            float(row.parcel_count),
         )
 
     # Track fleet hours by vehicle type instead of one pooled hour bucket.
@@ -529,7 +541,14 @@ def build_consolidated_routes(
                 )
                 if route is None:
                     continue
-                if route["capacity_utilization"] < candidate.min_capacity_utilization and len(chunks) > 0:
+                # min_capacity_utilization is a practical preference, not a
+                # reason to strand otherwise feasible demand. It is enforced
+                # only when explicitly configured above zero.
+                if (
+                    candidate.min_capacity_utilization > 0
+                    and route["capacity_utilization"] < candidate.min_capacity_utilization
+                    and len(chunks) > 0
+                ):
                     continue
 
                 hours_left = fleet_hours_remaining[candidate.vehicle_type]
