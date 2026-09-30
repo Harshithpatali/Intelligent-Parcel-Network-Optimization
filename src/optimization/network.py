@@ -15,20 +15,31 @@ def _hub_key(value):
 
 
 def build_cost_matrix(hubs):
-    """Analytical fallback when the road matrix has not been populated."""
+    """Build a deterministic fallback cost matrix.
+
+    Production routing should use the populated road matrix. For lightweight
+    tests or hub catalogs that do not carry coordinates, use a neutral
+    one-unit leg rather than crashing on a missing lat/lon column.
+    """
     rows = []
     from src.core.geo import haversine_km
+    has_coords = {"lat", "lon"}.issubset(hubs.columns)
     for _, a in hubs.iterrows():
         for _, b in hubs.iterrows():
-            if a.hub_id == b.hub_id:
+            if _hub_key(a.hub_id) == _hub_key(b.hub_id):
                 continue
-            km = haversine_km(a.lat, a.lon, b.lat, b.lon) * 1.18
+            if has_coords and pd.notna(a.lat) and pd.notna(a.lon) and pd.notna(b.lat) and pd.notna(b.lon):
+                km = haversine_km(float(a.lat), float(a.lon), float(b.lat), float(b.lon)) * 1.18
+                travel_time = km / 60.0
+            else:
+                km = 1.0
+                travel_time = 1.0
             rows.append({
                 "origin_hub": a.hub_id,
                 "destination_hub": b.hub_id,
                 "distance_km": km,
                 "unit_cost": 2.2 + 0.075 * km,
-                "travel_time_hours": km / 60.0,
+                "travel_time_hours": travel_time,
             })
     return pd.DataFrame(rows)
 
@@ -137,9 +148,11 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             )
             route_vars.append(x[(o, j, vt)])
         if not route_vars:
-            solver.Add(u[(o, j)] >= q)
+            solver.Add(u[(o, j)] == q)
         else:
-            solver.Add(sum(route_vars) + u[(o, j)] >= q)
+            # Demand is conserved exactly: every parcel is either assigned to
+            # a feasible vehicle trip or explicitly recorded as unmet.
+            solver.Add(sum(route_vars) + u[(o, j)] == q)
 
     # Fleet hours are shared across the network: a vehicle cannot be counted on
     # multiple OD routes simultaneously.
@@ -238,8 +251,9 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     out = pd.DataFrame(rows)
     total_requested = float(d.parcel_count.sum())
     total_unmet = float(sum(u[k].solution_value() for k in u))
+    total_served_network = float(out["parcels"].sum()) if not out.empty else 0.0
     total_cost = float(out.transport_cost.sum()) if not out.empty else 0.0
-    service = 1.0 - total_unmet / max(total_requested, 1.0)
+    service = (local_parcels + total_served_network) / max(total_requested, 1.0)
 
     metrics = {
         "status": "optimal" if status == pywraplp.Solver.OPTIMAL else "feasible",
@@ -248,7 +262,8 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         "service_level": service,
         "service_level_target": service_level_target,
         "objective_with_unmet_penalty": total_cost + total_unmet * UNMET_PENALTY,
-        "total_parcels": total_requested - total_unmet,
+        "total_parcels": local_parcels + total_served_network,
+        "network_served_parcels": total_served_network,
         "local_parcels_assumed_served": local_parcels,
         "fleet_vehicle_types": int(fleet.vehicle_type.nunique()),
         "routes_optimized": len(routes),

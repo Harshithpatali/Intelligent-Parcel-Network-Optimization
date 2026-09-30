@@ -62,7 +62,7 @@ def network():
   'forecast_date':data['forecast_date'],
   'model_version':data['model_version'],
   'optimizer_version':OPTIMIZER_VERSION,
-  'fleet':fleet.to_dict(orient='records'),
+  'fleet':fleet.to_dict(orient='records') if fleet is not None else [],
  }
 @app.post('/forecast')
 def forecast(req:ForecastRequest):

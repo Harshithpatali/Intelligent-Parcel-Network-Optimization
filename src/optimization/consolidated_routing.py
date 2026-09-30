@@ -38,7 +38,7 @@ class ConsolidatedRouteConfig:
     # Operational control rules.
     origin_cutoff_hour: float = 18.0
     stop_cutoff_hour: float = 23.0
-    staging_buffer_hours: float = 0.5
+    staging_buffer_hours: float = 0.0
 
 
 def _hub_key(value: Any) -> str:
@@ -181,6 +181,7 @@ def _detour_evaluation(origin, sequence, lookup, config: ConsolidatedRouteConfig
         "estimated_savings_pct": 100.0 * (direct_cost - route_cost) / max(direct_cost, 1e-9),
         "distance_detour_pct": (distance_ratio - 1.0) * 100.0,
         "time_detour_pct": (time_ratio - 1.0) * 100.0,
+        "economic_ratio": route_cost / max(direct_cost, 1e-9),
         "detour_score": (
             config.distance_weight * distance_ratio
             + config.time_weight * time_ratio
