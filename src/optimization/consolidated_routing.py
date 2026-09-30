@@ -229,11 +229,13 @@ def _build_route(
             marginal_score = (
                 config.distance_weight * marginal_distance_ratio
                 + config.time_weight * marginal_time_ratio
+                + config.economic_weight * evaluation["economic_ratio"]
             )
             candidate_score = 0.5 * evaluation["detour_score"] + 0.5 * marginal_score
 
             candidates.append((
                 candidate_score,
+                evaluation["economic_ratio"],
                 evaluation["detour_score"],
                 marginal_distance_ratio,
                 marginal_time_ratio,
@@ -247,7 +249,7 @@ def _build_route(
             break
 
         candidate = min(candidates, key=lambda x: x[:5])
-        _, _, _, _, _, idx, destination, quantity = candidate
+        _, _, _, _, _, _, idx, destination, quantity = candidate
         chunks.pop(idx)
         stops.append(destination)
         load_by_stop[destination] = quantity
