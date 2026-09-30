@@ -132,35 +132,50 @@ def _build_route(
             destination, quantity = chunk
             if quantity + load > config.parcel_capacity + 1e-9:
                 continue
-            leg = _travel(lookup, current, destination)
-            if leg is None:
-                continue
-            new_hours = hours + leg["travel_time_hours"]
-            if new_hours > config.max_route_hours + 1e-9:
-                continue
-            candidates.append(
-                (
-                    leg["distance_km"],
-                    leg["travel_time_hours"],
-                    -quantity,
-                    idx,
-                    destination,
-                    quantity,
+
+            # Test every insertion position, not only append-at-end.
+            # This catches cases where A->B->C is longer/slower than
+            # A->C->B and can also make an otherwise infeasible sequence feasible.
+            for position in range(len(stops) + 1):
+                candidate_stops = (
+                    stops[:position] + [destination] + stops[position:]
                 )
-            )
+                metrics = _route_metrics(origin, candidate_stops, lookup)
+                if metrics is None:
+                    continue
+                candidate_distance, candidate_hours = metrics
+                if candidate_hours > config.max_route_hours + 1e-9:
+                    continue
+
+                # Distance is the primary physical cost; time is the
+                # secondary tie-breaker. A later Pareto check also prevents
+                # a sequence that is simultaneously longer and slower.
+                candidates.append(
+                    (
+                        candidate_distance,
+                        candidate_hours,
+                        -quantity,
+                        idx,
+                        position,
+                        destination,
+                        quantity,
+                    )
+                )
 
         if not candidates:
             break
 
-        _, _, _, idx, destination, quantity = min(candidates)
+        _, _, _, idx, position, destination, quantity = min(candidates)
         chunks.pop(idx)
-        stops.append(destination)
-        loads.append(quantity)
+        stops.insert(position, destination)
+        loads.insert(position, quantity)
         load += quantity
-        leg = _travel(lookup, current, destination)
-        distance += leg["distance_km"]
-        hours += leg["travel_time_hours"]
-        current = destination
+
+        route_metrics = _route_metrics(origin, stops, lookup)
+        if route_metrics is None:
+            raise RuntimeError("Route insertion produced an invalid road sequence")
+        distance, hours = route_metrics
+        current = stops[-1]
 
     improved_stops, improved_metrics = _improve_stop_order(origin, stops, lookup)
     if improved_metrics is not None and improved_stops != stops:
