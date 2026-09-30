@@ -560,16 +560,30 @@ def build_consolidated_routes(
             routes.append(chosen)
             fleet_hours_remaining[chosen["vehicle_type"]] -= chosen["travel_time_hours"]
 
-            # Remove the exact chunks used by the chosen route.
-            used = {( _hub_key(d), float(q) ) for d, q in zip(chosen["destination_hubs"], chosen["stop_parcels"])}
+            # Reconcile the exact quantity served at each stop so partially used
+            # chunks remain available for the next route.
+            served_by_destination = {}
+            for destination, quantity in zip(
+                chosen["destination_hubs"], chosen["stop_parcels"]
+            ):
+                key = _hub_key(destination)
+                served_by_destination[key] = (
+                    served_by_destination.get(key, 0.0) + float(quantity)
+                )
+
             remaining_chunks = []
-            used_once: set[tuple[str, float]] = set()
             for chunk in chunks:
-                key = (_hub_key(chunk["destination"]), float(chunk["quantity"]))
-                if key in used and key not in used_once:
-                    used_once.add(key)
-                    continue
-                remaining_chunks.append(chunk)
+                key = _hub_key(chunk["destination"])
+                available = float(chunk["quantity"])
+                served = min(available, max(served_by_destination.get(key, 0.0), 0.0))
+                served_by_destination[key] = max(
+                    served_by_destination.get(key, 0.0) - served, 0.0
+                )
+                remainder = available - served
+                if remainder > 1e-9:
+                    remaining_chunks.append(
+                        {"destination": chunk["destination"], "quantity": remainder}
+                    )
             chunks = remaining_chunks
 
     route_rows = []
