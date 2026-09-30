@@ -62,11 +62,12 @@ def main():
     pressure = pd.DataFrame()
 
     if not forecast.empty:
-        hubs = hubs.merge(
-            capacity[["hub_id", "capacity_parcels"]],
-            on="hub_id",
-            how="left",
-        )
+        # Build a clean capacity-enriched hub frame. Do not merge the full
+        # logistics_hubs frame because a future schema may already contain a
+        # capacity_parcels column, which would create capacity_parcels_x/y.
+        hub_ids = hubs[["hub_id"]].drop_duplicates().copy()
+        capacity_map = capacity[["hub_id", "capacity_parcels"]].drop_duplicates("hub_id")
+        hubs = hub_ids.merge(capacity_map, on="hub_id", how="left")
         if hubs["capacity_parcels"].isna().any():
             missing = hubs.loc[hubs["capacity_parcels"].isna(), "hub_id"].tolist()
             raise RuntimeError(f"Missing calibrated capacity for hubs: {missing}")
