@@ -247,7 +247,10 @@ def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
 
     # Enumerate combinations by chunk index so quantities remain exact.
     for size in range(1, max_extra + 1):
-        for selected_indices in itertools.combinations(range(len(available)), size):
+        for selected_indices in itertools.combinations(range(1, len(available)), size - 1) if size > 1 else [()]:
+            # `first_chunk` was already removed from the pending pool by the
+            # caller, so every candidate route must include it.
+            selected_indices = (0,) + selected_indices
             selected = [available[i] for i in selected_indices]
             parcels = sum(float(x["quantity"]) for x in selected)
             if parcels > config.parcel_capacity + 1e-9:
