@@ -1294,8 +1294,4 @@ st.caption(
     f"Model: {summary.get('model_version')} · Optimizer: {summary.get('optimizer_version')} · "
     "Synthetic costs/disruption distributions are stress-test assumptions."
 )
-st.markdown(
-    '<small class="small-muted">FedEx-inspired purple/orange visual theme; this project is '
-    'independent and not affiliated with or endorsed by FedEx.</small>',
-    unsafe_allow_html=True,
-)
+
