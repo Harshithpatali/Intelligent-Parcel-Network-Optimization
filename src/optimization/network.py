@@ -196,13 +196,9 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         if inbound:
             solver.Add(sum(inbound) <= cap)
 
-    # Lexicographic objective:
-    #   1) minimize unmet demand first;
-    #   2) among maximum-service solutions, minimize transport cost.
-    #
-    # This is more robust than relying on a large unmet-demand penalty.  It
-    # guarantees that a feasible parcel movement is never left unmet merely
-    # because of fixed-charge economics.
+    # Lexicographic optimization using two solver instances. Reusing an
+    # Objective object after Solve() is backend-dependent, so keep the service
+    # and cost stages completely isolated.
     unmet_objective = solver.Objective()
     for key in u:
         unmet_objective.SetCoefficient(u[key], 1.0)
@@ -214,12 +210,69 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
 
     minimum_unmet = float(sum(var.solution_value() for var in u.values()))
 
-    # Lock the service level at the best value found in stage 1.
-    if u:
-        solver.Add(sum(u.values()) <= minimum_unmet + 1e-7)
-        solver.Add(sum(u.values()) >= minimum_unmet - 1e-7)
+    # The second stage is deliberately a fresh solver model. This avoids
+    # relying on solver-specific objective mutation semantics after Solve().
+    solver2 = pywraplp.Solver.CreateSolver("CBC_MIXED_INTEGER_PROGRAMMING")
+    if not solver2:
+        solver2 = pywraplp.Solver.CreateSolver("SCIP")
+    if not solver2:
+        raise RuntimeError("No supported OR-Tools mixed-integer solver is available")
 
-    transport_objective = solver.Objective()
+    x2 = {}
+    y2 = {}
+    u2 = {}
+
+    for (o, j), q in routes:
+        u2[(o, j)] = solver2.NumVar(0, solver2.infinity(), f"unmet_{o}_{j}")
+        route_vars = []
+        route_key = (_hub_key(o), _hub_key(j))
+        if route_key not in route:
+            solver2.Add(u2[(o, j)] == q)
+            continue
+
+        for _, fr in fleet.iterrows():
+            vt = str(fr.vehicle_type)
+            t = route[route_key]["travel_time_hours"]
+            if t <= 0 or t > float(fr.max_trip_hours):
+                continue
+            max_trips_per_vehicle = max(
+                1, int(float(fr.operating_hours_per_day) // t)
+            )
+            max_trips = int(fr.vehicle_count) * max_trips_per_vehicle
+            y2[(o, j, vt)] = solver2.IntVar(0, max_trips, f"trips_{o}_{j}_{vt}")
+            x2[(o, j, vt)] = solver2.IntVar(0, solver2.infinity(), f"parcels_{o}_{j}_{vt}")
+            solver2.Add(x2[(o, j, vt)] <= float(fr.parcel_capacity) * y2[(o, j, vt)])
+            route_vars.append(x2[(o, j, vt)])
+
+        if not route_vars:
+            solver2.Add(u2[(o, j)] == q)
+        else:
+            solver2.Add(sum(route_vars) + u2[(o, j)] == q)
+            solver2.Add(u2[(o, j)] <= q)
+
+    for _, fr in fleet.iterrows():
+        vt = str(fr.vehicle_type)
+        hour_terms = [
+            float(route[(_hub_key(o), _hub_key(j))]["travel_time_hours"]) * y2[(o, j, vt)]
+            for (o, j), _ in routes
+            if (o, j, vt) in y2
+        ]
+        if hour_terms:
+            solver2.Add(sum(hour_terms) <= float(fr.vehicle_count) * float(fr.operating_hours_per_day))
+
+    for h, cap in caps.items():
+        outbound = [v for (o, j, vt), v in x2.items() if _hub_key(o) == h]
+        inbound = [v for (o, j, vt), v in x2.items() if _hub_key(j) == h]
+        if outbound:
+            solver2.Add(sum(outbound) <= cap)
+        if inbound:
+            solver2.Add(sum(inbound) <= cap)
+
+    # Lock the exact best service level from stage 1, then minimize transport cost.
+    solver2.Add(sum(u2.values()) <= minimum_unmet + 1e-7)
+    solver2.Add(sum(u2.values()) >= minimum_unmet - 1e-7)
+
+    transport_objective = solver2.Objective()
     for (o, j), _ in routes:
         rc = route.get((_hub_key(o), _hub_key(j)))
         if rc is None:
@@ -227,15 +280,21 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         for _, fr in fleet.iterrows():
             vt = str(fr.vehicle_type)
             key = (o, j, vt)
-            if key not in x:
+            if key not in y2:
                 continue
             trip_cost = float(fr.fixed_trip_cost) + float(fr.cost_per_km) * rc["distance_km"]
-            transport_objective.SetCoefficient(y[key], trip_cost)
+            transport_objective.SetCoefficient(y2[key], trip_cost)
     transport_objective.SetMinimization()
 
-    status = solver.Solve()
-    if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
-        raise RuntimeError("Network optimization infeasible")
+    status2 = solver2.Solve()
+    if status2 not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+        raise RuntimeError("Network cost optimization infeasible")
+
+    # Use the second-stage variables for output and metrics.
+    x = x2
+    y = y2
+    u = u2
+    status = status2
 
     rows = []
     for (o, j), requested in routes:
