@@ -167,8 +167,10 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             if key not in x:
                 continue
             trip_cost = float(fr.fixed_trip_cost) + float(fr.cost_per_km) * rc["distance_km"]
-            obj.SetCoefficient(x[key], trip_cost / float(fr.parcel_capacity))
-            obj.SetCoefficient(y[key], 0.001)
+            # Fixed-charge objective: dispatching a trip incurs its full
+            # fixed + distance cost regardless of load. Charging x (parcels)
+            # here would make lightly loaded trips appear artificially cheap.
+            obj.SetCoefficient(y[key], trip_cost)
     obj.SetMinimization()
 
     status = solver.Solve()
@@ -201,6 +203,9 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
                 "distance_km": rc["distance_km"],
                 "travel_time_hours": rc["travel_time_hours"],
                 "transport_cost": trips * trip_cost,
+                "trip_cost": trip_cost,
+                "capacity_utilization": parcels / max(float(fr.parcel_capacity) * max(trips, 1), 1.0),
+                "status": "served",
             })
             unmet_written = True
 
@@ -217,6 +222,9 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
                 "distance_km": rc.get("distance_km"),
                 "travel_time_hours": rc.get("travel_time_hours"),
                 "transport_cost": 0.0,
+                "trip_cost": 0.0,
+                "capacity_utilization": 0.0,
+                "status": "unmet_no_feasible_vehicle",
             })
 
     out = pd.DataFrame(rows)
