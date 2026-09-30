@@ -86,11 +86,13 @@ def routing(req:RoutingRequest):
    cost_per_km=req.cost_per_km,
    distance_weight=req.distance_weight,
    time_weight=req.time_weight,
+   economic_weight=req.economic_weight,
+   service_time_minutes_per_stop=req.service_time_minutes_per_stop,
    vehicle_count=vehicle_count,
    operating_hours_per_day=operating_hours,
   )
   routes,m=build_consolidated_routes(d,data['hubs'],data['cost'],cfg)
-  m.update({'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version']})
+  m.update({'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version'],'fleet_vehicle_count':vehicle_count,'fleet_operating_hours':operating_hours,'fleet_vehicle_type':'linehaul_truck'})
   return {'metrics':m,'routes':routes.to_dict(orient='records')}
  except Exception:
   logger.exception('routing_failed')
