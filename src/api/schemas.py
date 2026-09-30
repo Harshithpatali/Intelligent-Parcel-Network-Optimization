@@ -11,3 +11,5 @@ class RoutingRequest(BaseModel):
     max_stops:int=Field(5,ge=1,le=15)
     fixed_trip_cost:float=Field(45.0,ge=0)
     cost_per_km:float=Field(.075,ge=0)
+    distance_weight:float=Field(.5,ge=0)
+    time_weight:float=Field(.5,ge=0)
