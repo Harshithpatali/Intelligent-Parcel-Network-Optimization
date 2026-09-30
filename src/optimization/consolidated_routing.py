@@ -227,142 +227,129 @@ def _best_stop_sequence(origin, stops, lookup, config: ConsolidatedRouteConfig):
 
 
 def _build_route(origin, first_chunk, chunks, lookup, config, parcel_profiles):
-    stops = [first_chunk["destination"]]
-    stop_loads = [float(first_chunk["quantity"])]
+    """Build the best feasible route from a candidate stop set.
 
-    def current_load():
-        return sum(stop_loads)
+    The previous implementation committed to the largest first chunk and then
+    greedily appended stops. That can trap the search in a directed road graph:
+    a locally attractive first stop may make every later permutation infeasible.
+    For small linehaul stop counts, enumerate feasible subsets/permutations and
+    choose the best complete route. This is deterministic and bounded by
+    max_stops.
+    """
+    available = [first_chunk] + list(chunks)
+    # Keep one candidate chunk per destination for the normal OD-level input.
+    # Duplicate destination chunks are retained because a large OD can be
+    # split across vehicles.
+    max_extra = min(config.max_stops, len(available))
 
-    while len(stops) < config.max_stops:
-        candidates = []
-        for idx, chunk in enumerate(chunks):
-            quantity = float(chunk["quantity"])
-            if current_load() + quantity > config.parcel_capacity + 1e-9:
+    best_route = None
+    best_key = None
+
+    # Enumerate combinations by chunk index so quantities remain exact.
+    for size in range(1, max_extra + 1):
+        for selected_indices in itertools.combinations(range(len(available)), size):
+            selected = [available[i] for i in selected_indices]
+            parcels = sum(float(x["quantity"]) for x in selected)
+            if parcels > config.parcel_capacity + 1e-9:
                 continue
 
-            trial_stops = stops + [chunk["destination"]]
-            evaluation = _best_stop_sequence(origin, trial_stops, lookup, config)
+            stops = [x["destination"] for x in selected]
+            if len({_hub_key(x) for x in stops}) != len(stops):
+                continue
+
+            evaluation = _best_stop_sequence(origin, stops, lookup, config)
             if evaluation is None:
                 continue
 
-            endpoint = stops[-1]
-            added_leg = _travel(lookup, endpoint, chunk["destination"])
-            direct_leg = _travel(lookup, origin, chunk["destination"])
-            if added_leg is None or direct_leg is None:
+            load_by_destination = {
+                _hub_key(x["destination"]): float(x["quantity"])
+                for x in selected
+            }
+            ordered_loads = [
+                load_by_destination[_hub_key(destination)]
+                for destination in evaluation["sequence"]
+            ]
+
+            total_weight = 0.0
+            total_volume = 0.0
+            for destination, qty in zip(evaluation["sequence"], ordered_loads):
+                profile = parcel_profiles[(_hub_key(origin), _hub_key(destination))]
+                total_weight += profile["avg_weight_kg"] * qty
+                total_volume += profile["avg_volume_m3"] * qty
+
+            route_hours = evaluation["route_operational_hours"] + config.driver_break_hours
+            route_hours += config.staging_buffer_hours
+
+            if config.return_to_origin:
+                return_leg = _travel(lookup, evaluation["sequence"][-1], origin)
+                if return_leg is None:
+                    continue
+                route_hours += return_leg["travel_time_hours"]
+                evaluation = evaluation.copy()
+                evaluation["distance_km"] += return_leg["distance_km"]
+                evaluation["drive_time_hours"] += return_leg["travel_time_hours"]
+                evaluation["travel_time_hours"] = evaluation["drive_time_hours"]
+                evaluation["transport_cost"] += (
+                    config.cost_per_km
+                    * return_leg["distance_km"]
+                    * config.empty_return_factor
+                )
+
+            route_hours += parcels * config.unloading_minutes_per_parcel / 60.0
+
+            if total_weight > config.max_weight_kg + 1e-9:
+                continue
+            if total_volume > config.max_volume_m3 + 1e-9:
+                continue
+            if route_hours > config.max_route_hours + 1e-9:
                 continue
 
-            marginal_distance_ratio = added_leg["distance_km"] / max(
-                direct_leg["distance_km"], 1e-9
+            capacity_utilization = parcels / float(config.parcel_capacity)
+            route = {
+                "origin_hub": origin,
+                "destination_hubs": evaluation["sequence"],
+                "stop_parcels": ordered_loads,
+                "parcels": parcels,
+                "stops": len(evaluation["sequence"]),
+                "weight_kg": total_weight,
+                "volume_m3": total_volume,
+                "distance_km": evaluation["distance_km"],
+                "travel_time_hours": evaluation["travel_time_hours"],
+                "route_operational_hours": route_hours,
+                "drive_time_hours": evaluation["drive_time_hours"],
+                "baseline_distance_km": evaluation["baseline_distance_km"],
+                "baseline_time_hours": evaluation["baseline_time_hours"],
+                "distance_ratio": evaluation["distance_ratio"],
+                "time_ratio": evaluation["time_ratio"],
+                "distance_detour_pct": evaluation["distance_detour_pct"],
+                "time_detour_pct": evaluation["time_detour_pct"],
+                "detour_score": evaluation["detour_score"],
+                "economic_ratio": evaluation["economic_ratio"],
+                "direct_dispatch_cost": evaluation["direct_dispatch_cost"],
+                "estimated_savings": evaluation["estimated_savings"],
+                "estimated_savings_pct": evaluation["estimated_savings_pct"],
+                "service_time_minutes_per_stop": config.service_time_minutes_per_stop,
+                "transport_cost": evaluation["transport_cost"],
+                "capacity_utilization": capacity_utilization,
+                "weight_utilization": total_weight / max(config.max_weight_kg, 1e-9),
+                "volume_utilization": total_volume / max(config.max_volume_m3, 1e-9),
+                "vehicle_type": config.vehicle_type,
+                "status": "planned",
+            }
+
+            key = (
+                -parcels,
+                evaluation["transport_cost"] / max(parcels, 1e-9),
+                evaluation["detour_score"],
+                evaluation["distance_km"],
+                evaluation["travel_time_hours"],
+                tuple(str(x) for x in evaluation["sequence"]),
             )
-            marginal_time_ratio = added_leg["travel_time_hours"] / max(
-                direct_leg["travel_time_hours"], 1e-9
-            )
-            marginal_score = (
-                config.distance_weight * marginal_distance_ratio
-                + config.time_weight * marginal_time_ratio
-                + config.economic_weight * evaluation["economic_ratio"]
-            )
+            if best_route is None or key < best_key:
+                best_route = route
+                best_key = key
 
-            candidates.append(
-                (
-                    0.5 * evaluation["detour_score"] + 0.5 * marginal_score,
-                    evaluation["economic_ratio"],
-                    evaluation["detour_score"],
-                    marginal_distance_ratio,
-                    marginal_time_ratio,
-                    -quantity,
-                    idx,
-                )
-            )
-
-        if not candidates:
-            break
-
-        selected = min(candidates, key=lambda x: x[:5])
-        idx = selected[6]
-        selected_chunk = chunks.pop(idx)
-        stops.append(selected_chunk["destination"])
-        stop_loads.append(float(selected_chunk["quantity"]))
-
-    evaluation = _best_stop_sequence(origin, stops, lookup, config)
-    if evaluation is None:
-        return None
-
-    # Reorder the load amounts with the chosen stop permutation.
-    load_by_destination: dict[str, float] = {}
-    for destination, quantity in zip(stops, stop_loads):
-        load_by_destination.setdefault(_hub_key(destination), 0.0)
-        load_by_destination[_hub_key(destination)] += quantity
-    ordered_loads = [load_by_destination[_hub_key(s)] for s in evaluation["sequence"]]
-    parcels = sum(ordered_loads)
-
-    total_weight = 0.0
-    total_volume = 0.0
-    for destination, qty in zip(evaluation["sequence"], ordered_loads):
-        profile = parcel_profiles[(_hub_key(origin), _hub_key(destination))]
-        total_weight += profile["avg_weight_kg"] * qty
-        total_volume += profile["avg_volume_m3"] * qty
-
-    # Schedule clock is a relative operating-hours approximation.
-    route_hours = evaluation["route_operational_hours"] + config.driver_break_hours
-    route_hours += config.staging_buffer_hours
-
-    if config.return_to_origin:
-        return_leg = _travel(lookup, evaluation["sequence"][-1], origin)
-        if return_leg is None:
-            return None
-        route_hours += return_leg["travel_time_hours"]
-        evaluation["distance_km"] += return_leg["distance_km"]
-        evaluation["drive_time_hours"] += return_leg["travel_time_hours"]
-        evaluation["travel_time_hours"] = evaluation["drive_time_hours"]
-
-        evaluation["transport_cost"] += (
-            config.cost_per_km * return_leg["distance_km"] * config.empty_return_factor
-        )
-
-    unload_hours = parcels * config.unloading_minutes_per_parcel / 60.0
-    route_hours += unload_hours
-    evaluation["travel_time_hours"] = evaluation["drive_time_hours"]
-
-    if total_weight > config.max_weight_kg + 1e-9:
-        return None
-    if total_volume > config.max_volume_m3 + 1e-9:
-        return None
-    if route_hours > config.max_route_hours + 1e-9:
-        return None
-
-    capacity_utilization = parcels / float(config.parcel_capacity)
-    return {
-        "origin_hub": origin,
-        "destination_hubs": evaluation["sequence"],
-        "stop_parcels": ordered_loads,
-        "parcels": parcels,
-        "stops": len(evaluation["sequence"]),
-        "weight_kg": total_weight,
-        "volume_m3": total_volume,
-        "distance_km": evaluation["distance_km"],
-        "travel_time_hours": evaluation["travel_time_hours"],
-        "route_operational_hours": route_hours,
-        "drive_time_hours": evaluation["drive_time_hours"],
-        "baseline_distance_km": evaluation["baseline_distance_km"],
-        "baseline_time_hours": evaluation["baseline_time_hours"],
-        "distance_ratio": evaluation["distance_ratio"],
-        "time_ratio": evaluation["time_ratio"],
-        "distance_detour_pct": evaluation["distance_detour_pct"],
-        "time_detour_pct": evaluation["time_detour_pct"],
-        "detour_score": evaluation["detour_score"],
-        "economic_ratio": evaluation["economic_ratio"],
-        "direct_dispatch_cost": evaluation["direct_dispatch_cost"],
-        "estimated_savings": evaluation["estimated_savings"],
-        "estimated_savings_pct": evaluation["estimated_savings_pct"],
-        "service_time_minutes_per_stop": config.service_time_minutes_per_stop,
-        "transport_cost": evaluation["transport_cost"],
-        "capacity_utilization": capacity_utilization,
-        "weight_utilization": total_weight / max(config.max_weight_kg, 1e-9),
-        "volume_utilization": total_volume / max(config.max_volume_m3, 1e-9),
-        "vehicle_type": config.vehicle_type,
-        "status": "planned",
-    }
+    return best_route
 
 
 def _vehicle_candidates(fleet: pd.DataFrame | None, config: ConsolidatedRouteConfig):
