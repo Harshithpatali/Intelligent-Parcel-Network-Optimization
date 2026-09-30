@@ -215,49 +215,65 @@ with t5:
 with t6:
     st.subheader("Parcel consolidation + multi-stop routing")
     st.caption(
-        "Operational routing combines OSRM-backed road distance/time, production linehaul capacity, "
-        "fleet-hour availability, stop service time, and economic consolidation."
+        "OSRM road distance/time + fleet availability + parcel capacity + weight/cube + detour guardrails + "
+        "round-trip economics. The final map stays on this page."
     )
 
     fleet_df = pd.DataFrame(network.get("fleet", []))
-    linehaul = (
-        fleet_df[fleet_df["vehicle_type"].astype(str).eq("linehaul_truck")].head(1)
-        if not fleet_df.empty and "vehicle_type" in fleet_df.columns
-        else pd.DataFrame()
-    )
-    production_capacity = int(linehaul.iloc[0]["parcel_capacity"]) if not linehaul.empty else 40
-    production_hours = float(linehaul.iloc[0]["max_trip_hours"]) if not linehaul.empty and "max_trip_hours" in linehaul.columns else 16.0
-    production_cost_km = float(linehaul.iloc[0]["cost_per_km"]) if not linehaul.empty and "cost_per_km" in linehaul.columns else 0.075
-    production_fixed_cost = float(linehaul.iloc[0]["fixed_trip_cost"]) if not linehaul.empty else 45.0
+    vehicle_options = ["any"]
+    if not fleet_df.empty and "vehicle_type" in fleet_df.columns:
+        vehicle_options += list(fleet_df["vehicle_type"].astype(str).drop_duplicates())
+
+    vehicle_type = st.selectbox("Vehicle type", vehicle_options, index=1 if len(vehicle_options) > 1 else 0)
+    selected = fleet_df[fleet_df["vehicle_type"].astype(str).eq(vehicle_type)].head(1) if vehicle_type != "any" else pd.DataFrame()
+
+    default_capacity = int(selected.iloc[0]["parcel_capacity"]) if not selected.empty else 40
+    default_hours = float(selected.iloc[0]["max_trip_hours"]) if not selected.empty and "max_trip_hours" in selected.columns else 16.0
+    default_fixed = float(selected.iloc[0]["fixed_trip_cost"]) if not selected.empty else 45.0
+    default_km = float(selected.iloc[0]["cost_per_km"]) if not selected.empty else 0.075
 
     st.markdown(
-        f'<div class="fx-note">Production linehaul defaults: <b>{production_capacity}</b> parcels/truck · '
-        f'<b>{production_hours:.1f} h</b> max trip · <b>{production_fixed_cost:.2f}</b> fixed trip cost · '
-        f'<b>{production_cost_km:.3f}</b>/km.</div>',
+        f'<div class="fx-note">Fleet defaults: <b>{default_capacity}</b> parcels · <b>{default_hours:.1f} h</b> max trip · '
+        f'<b>{default_fixed:.2f}</b> fixed trip cost · <b>{default_km:.3f}/km</b>.</div>',
         unsafe_allow_html=True,
     )
 
-    a, b, c, d = st.columns(4)
-    parcel_capacity = a.number_input("Truck capacity", min_value=1, max_value=200, value=production_capacity, step=1)
-    max_route_hours = b.number_input("Max route hours", min_value=1.0, max_value=48.0, value=production_hours, step=1.0)
-    max_stops = c.number_input("Max stops", min_value=1, max_value=10, value=5, step=1)
-    demand_multiplier = d.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05)
+    c1, c2, c3, c4 = st.columns(4)
+    parcel_capacity = c1.number_input("Parcel capacity", min_value=1, max_value=500, value=default_capacity, step=1)
+    max_route_hours = c2.number_input("Max route hours", min_value=1.0, max_value=72.0, value=default_hours, step=1.0)
+    max_stops = c3.number_input("Max stops", min_value=1, max_value=15, value=5, step=1)
+    demand_multiplier = c4.slider("Demand multiplier", 0.5, 2.0, 1.0, 0.05)
 
-    a, b, c, d = st.columns(4)
-    service_time = a.number_input("Service min / stop", min_value=0.0, max_value=180.0, value=15.0, step=5.0)
-    distance_weight = b.slider("Distance weight", 0.0, 1.0, 0.4, 0.05)
-    time_weight = c.slider("Time weight", 0.0, 1.0, 0.4, 0.05)
-    economic_weight = d.slider("Economic weight", 0.0, 1.0, 0.2, 0.05)
+    c1, c2, c3, c4 = st.columns(4)
+    max_weight_kg = c1.number_input("Max weight (kg)", min_value=100.0, value=12000.0, step=250.0)
+    max_volume_m3 = c2.number_input("Max volume (m³)", min_value=1.0, value=65.0, step=1.0)
+    service_time = c3.number_input("Service min / stop", min_value=0.0, max_value=180.0, value=15.0, step=5.0)
+    min_util = c4.slider("Minimum load factor", 0.0, 1.0, 0.60, 0.05)
 
-    with st.expander("Advanced cost assumptions"):
-        fixed_trip_cost = st.number_input("Fixed trip cost", min_value=0.0, value=production_fixed_cost, step=1.0)
-        cost_per_km = st.number_input("Cost / km", min_value=0.0, value=production_cost_km, step=0.005, format="%.3f")
+    c1, c2, c3, c4 = st.columns(4)
+    return_to_origin = c1.checkbox("Return to origin", value=False)
+    driver_break = c2.number_input("Driver break (h)", min_value=0.0, max_value=4.0, value=0.5, step=0.25)
+    loading_minutes = c3.number_input("Loading (min)", min_value=0.0, max_value=240.0, value=30.0, step=5.0)
+    unloading_minutes = c4.number_input("Unload min / parcel", min_value=0.0, max_value=10.0, value=0.5, step=0.1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    max_detour = c1.slider("Max distance detour %", 0.0, 100.0, 25.0, 5.0)
+    max_time_detour = c2.slider("Max time detour %", 0.0, 100.0, 25.0, 5.0)
+    distance_weight = c3.slider("Distance weight", 0.0, 1.0, 0.4, 0.05)
+    time_weight = c4.slider("Time weight", 0.0, 1.0, 0.4, 0.05)
+
+    with st.expander("Advanced economics"):
+        fixed_trip_cost = st.number_input("Fixed trip cost", min_value=0.0, value=default_fixed, step=1.0)
+        cost_per_km = st.number_input("Cost / km", min_value=0.0, value=default_km, step=0.005, format="%.3f")
+        economic_weight = st.slider("Economic weight", 0.0, 1.0, 0.2, 0.05)
+        empty_return_factor = st.slider("Empty return cost factor", 0.0, 1.0, 0.35, 0.05)
 
     if distance_weight + time_weight + economic_weight <= 0:
         st.error("At least one route-scoring weight must be positive.")
 
     if st.button("Build consolidated routes", type="primary"):
         payload = {
+            "vehicle_type": vehicle_type,
             "parcel_capacity": int(parcel_capacity),
             "max_route_hours": float(max_route_hours),
             "max_stops": int(max_stops),
@@ -267,7 +283,17 @@ with t6:
             "distance_weight": float(distance_weight),
             "time_weight": float(time_weight),
             "economic_weight": float(economic_weight),
+            "max_weight_kg": float(max_weight_kg),
+            "max_volume_m3": float(max_volume_m3),
             "service_time_minutes_per_stop": float(service_time),
+            "loading_minutes": float(loading_minutes),
+            "unloading_minutes_per_parcel": float(unloading_minutes),
+            "driver_break_hours": float(driver_break),
+            "return_to_origin": bool(return_to_origin),
+            "empty_return_factor": float(empty_return_factor),
+            "max_detour_pct": float(max_detour),
+            "max_time_detour_pct": float(max_time_detour),
+            "min_capacity_utilization": float(min_util),
         }
         r = post("/routing", payload, timeout=120)
 
@@ -277,22 +303,22 @@ with t6:
             routes = pd.DataFrame(body["routes"])
 
             x, y, z, q = st.columns(4)
-            x.metric("Consolidated routes", int(metrics["consolidated_routes"]))
-            y.metric("Average stops", f"{metrics['average_stops']:.1f}")
-            z.metric("Avg utilization", f"{metrics['average_capacity_utilization']:.1%}")
-            q.metric("Cost savings", f"{metrics['estimated_cost_savings_pct']:.1f}%")
+            x.metric("Routes", int(metrics["consolidated_routes"]))
+            y.metric("Avg stops", f"{metrics['average_stops']:.1f}")
+            z.metric("Avg parcel fill", f"{metrics['average_capacity_utilization']:.1%}")
+            q.metric("Modeled savings", f"{metrics['estimated_cost_savings_pct']:.1f}%")
 
             f1, f2, f3, f4 = st.columns(4)
             f1.metric("Service level", f"{metrics['service_level']:.1%}")
-            f2.metric("Fleet hours used", f"{metrics.get('fleet_hours_used', 0):.1f} h")
-            f3.metric("Fleet hours left", f"{metrics.get('fleet_hours_remaining', 0):.1f} h")
+            f2.metric("Weight fill", f"{metrics.get('average_weight_utilization', 0):.1%}")
+            f3.metric("Cube fill", f"{metrics.get('average_volume_utilization', 0):.1%}")
             f4.metric("Unmet parcels", f"{metrics.get('unmet_parcels', 0):.0f}")
 
+            if metrics.get("unmet_reasons"):
+                st.caption("Unmet reasons: " + ", ".join(f"{k}={v:.0f}" for k,v in metrics["unmet_reasons"].items()))
+
             if not routes.empty:
-                coord = {
-                    row.hub_id: (float(row.lat), float(row.lng))
-                    for row in hubs.itertuples()
-                }
+                coord = {row.hub_id: (float(row.lat), float(row.lng)) for row in hubs.itertuples()}
                 fmap = folium.Map(
                     location=[float(hubs["lat"].mean()), float(hubs["lng"].mean())],
                     zoom_start=4,
@@ -300,11 +326,7 @@ with t6:
                     tiles="CartoDB positron",
                 )
 
-                palette = [
-                    "#4D148C", "#FF6600", "#6B2BA8", "#D95700", "#7E57C2",
-                    "#E87500", "#3F0D73", "#C44D00", "#8D5CC2", "#B85E00",
-                ]
-
+                palette = ["#4D148C", "#FF6600", "#6B2BA8", "#D95700", "#7E57C2", "#E87500", "#3F0D73", "#C44D00"]
                 for row in hubs.itertuples():
                     folium.CircleMarker(
                         location=[float(row.lat), float(row.lng)],
@@ -319,27 +341,24 @@ with t6:
                 for idx, row in routes.iterrows():
                     sequence = [row["origin_hub"]] + list(row["destination_hubs"])
                     points = [coord[h] for h in sequence if h in coord]
-                    color = palette[idx % len(palette)]
                     folium.PolyLine(
                         points,
-                        color=color,
+                        color=palette[idx % len(palette)],
                         weight=5,
-                        opacity=.78,
-                        tooltip=(
-                            f"Route {int(row['route_id'])}: {int(row['parcels'])} parcels · "
-                            f"{int(row['stops'])} stops · {row['capacity_utilization']:.1%} full"
-                        ),
+                        opacity=.80,
+                        tooltip=f"R{int(row['route_id'])} · {int(row['parcels'])} parcels · {int(row['stops'])} stops",
                         popup=(
                             f"<b>Route {int(row['route_id'])}</b><br>"
+                            f"Vehicle: {row.get('vehicle_type','n/a')}<br>"
                             f"Stops: {int(row['stops'])}<br>"
                             f"Parcels: {row['parcels']:.1f}<br>"
-                            f"Utilization: {row['capacity_utilization']:.1%}<br>"
+                            f"Weight: {row.get('weight_kg',0):.1f} kg ({row.get('weight_utilization',0):.1%})<br>"
+                            f"Cube: {row.get('volume_m3',0):.2f} m³ ({row.get('volume_utilization',0):.1%})<br>"
                             f"Distance: {row['distance_km']:.1f} km<br>"
-                            f"Travel + service time: {row['travel_time_hours']:.1f} h<br>"
-                            f"Detour: {row.get('distance_detour_pct', 0):.1f}% distance / "
-                            f"{row.get('time_detour_pct', 0):.1f}% time<br>"
+                            f"Travel + ops: {row['travel_time_hours']:.1f} h<br>"
+                            f"Detour: {row.get('distance_detour_pct',0):.1f}% distance / {row.get('time_detour_pct',0):.1f}% time<br>"
                             f"Modeled cost: {row['transport_cost']:.2f}<br>"
-                            f"Savings: {row.get('estimated_savings', 0):.2f}"
+                            f"Savings vs direct: {row.get('estimated_savings',0):.2f}"
                         ),
                     ).add_to(fmap)
 
@@ -359,27 +378,13 @@ with t6:
                 display["destination_hubs"] = display["destination_hubs"].map(lambda xs: " → ".join(map(str, xs)))
                 display["stop_parcels"] = display["stop_parcels"].astype(str)
                 keep = [
-                    "route_id", "origin_hub", "destination_hubs", "parcels", "stops",
-                    "capacity_utilization", "distance_km", "travel_time_hours",
-                    "distance_detour_pct", "time_detour_pct", "transport_cost",
-                    "estimated_savings",
+                    "route_id","origin_hub","destination_hubs","vehicle_type","parcels","stops",
+                    "capacity_utilization","weight_kg","weight_utilization","volume_m3","volume_utilization",
+                    "distance_km","travel_time_hours","distance_detour_pct","time_detour_pct",
+                    "transport_cost","estimated_savings","status",
                 ]
                 keep = [col for col in keep if col in display.columns]
                 st.dataframe(display[keep], use_container_width=True, hide_index=True)
-
-                if metrics["estimated_cost_savings"] > 0:
-                    st.success(
-                        f"Consolidation reduces modeled transport cost by "
-                        f"{metrics['estimated_cost_savings']:.2f} "
-                        f"({metrics['estimated_cost_savings_pct']:.1f}%) versus direct dispatches."
-                    )
-                else:
-                    st.info(
-                        "The route set does not reduce modeled transport cost under the current "
-                        "capacity, time and fleet constraints."
-                    )
-            else:
-                st.warning("No feasible consolidated routes were generated.")
         else:
             st.error(r.text)
 
