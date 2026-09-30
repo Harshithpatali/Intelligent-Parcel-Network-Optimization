@@ -51,6 +51,60 @@ def _travel(lookup, origin, destination):
     return lookup.get((origin, destination))
 
 
+
+def _route_metrics(origin, stops, lookup):
+    distance = 0.0
+    hours = 0.0
+    current = origin
+    for destination in stops:
+        leg = _travel(lookup, current, destination)
+        if leg is None:
+            return None
+        distance += leg["distance_km"]
+        hours += leg["travel_time_hours"]
+        current = destination
+    return distance, hours
+
+
+def _improve_stop_order(origin, stops, lookup):
+    """
+    Improve the stop sequence using pairwise 2-opt-style reversals.
+
+    A candidate sequence is accepted only when it is no worse on both
+    distance and travel time and strictly better on at least one. This
+    prevents a route such as A->B->C from surviving when A->C->B is
+    simultaneously shorter and faster.
+    """
+    sequence = list(stops)
+    current = _route_metrics(origin, sequence, lookup)
+    if current is None or len(sequence) < 2:
+        return sequence, current
+
+    changed = True
+    while changed:
+        changed = False
+        best_sequence = sequence
+        best_metrics = current
+
+        for i in range(len(sequence) - 1):
+            for j in range(i + 1, len(sequence)):
+                candidate = sequence[:i] + list(reversed(sequence[i:j + 1])) + sequence[j + 1:]
+                metrics = _route_metrics(origin, candidate, lookup)
+                if metrics is None:
+                    continue
+                d, t = metrics
+                bd, bt = best_metrics
+                if d <= bd + 1e-9 and t <= bt + 1e-9 and (d < bd - 1e-9 or t < bt - 1e-9):
+                    best_sequence = candidate
+                    best_metrics = metrics
+
+        if best_sequence != sequence:
+            sequence = best_sequence
+            current = best_metrics
+            changed = True
+
+    return sequence, current
+
 def _build_route(
     origin,
     first_stop,
@@ -107,6 +161,13 @@ def _build_route(
         distance += leg["distance_km"]
         hours += leg["travel_time_hours"]
         current = destination
+
+    improved_stops, improved_metrics = _improve_stop_order(origin, stops, lookup)
+    if improved_metrics is not None and improved_stops != stops:
+        load_by_destination = dict(zip(stops, loads))
+        stops = improved_stops
+        loads = [load_by_destination[destination] for destination in stops]
+        distance, hours = improved_metrics
 
     return {
         "origin_hub": origin,
