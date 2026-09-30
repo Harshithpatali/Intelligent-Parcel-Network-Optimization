@@ -6,6 +6,13 @@ except ImportError:
 
 UNMET_PENALTY = 1000.0
 
+def _hub_key(value):
+    """Canonical key so string IDs (H01) and numeric IDs (1) remain usable."""
+    if pd.isna(value):
+        return "<NA>"
+    return str(value).strip()
+
+
 
 def build_cost_matrix(hubs):
     """Analytical fallback when the road matrix has not been populated."""
@@ -57,14 +64,14 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
 
     route = {}
     for _, r in cost.iterrows():
-        route[(r.origin_hub, r.destination_hub)] = {
+        route[(_hub_key(r.origin_hub), _hub_key(r.destination_hub))] = {
             "distance_km": float(r.distance_km),
             "travel_time_hours": float(r.travel_time_hours),
             "unit_cost": float(r.unit_cost),
         }
 
     caps = {
-        row.hub_id: float(row.capacity_parcels) * capacity_multiplier
+        _hub_key(row.hub_id): float(row.capacity_parcels) * capacity_multiplier
         for _, row in hubs.iterrows()
     }
     if fleet is None:
@@ -93,12 +100,12 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     # linehaul route in this network model, so treat it as locally served
     # rather than incorrectly counting it as road/fleet unmet demand.
     local_parcels = float(
-        d.loc[d["origin_hub"] == d["destination_hub"], "parcel_count"].sum()
+        d.loc[d["origin_hub"].map(_hub_key) == d["destination_hub"].map(_hub_key), "parcel_count"].sum()
     )
     routes = [
         ((r.origin_hub, r.destination_hub), float(r.parcel_count))
         for _, r in d.iterrows()
-        if r.origin_hub != r.destination_hub
+        if _hub_key(r.origin_hub) != _hub_key(r.destination_hub)
     ]
     if not routes and local_parcels <= 0:
         raise ValueError("Demand contains no OD routes")
@@ -110,12 +117,13 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     for (o, j), q in routes:
         u[(o, j)] = solver.NumVar(0, solver.infinity(), f"unmet_{o}_{j}")
         route_vars = []
-        if (o, j) not in route:
+        route_key = (_hub_key(o), _hub_key(j))
+        if route_key not in route:
             solver.Add(u[(o, j)] >= q)
             continue
         for fi, fr in fleet.iterrows():
             vt = str(fr.vehicle_type)
-            t = route[(o, j)]["travel_time_hours"]
+            t = route[route_key]["travel_time_hours"]
             if t <= 0 or t > float(fr.max_trip_hours):
                 continue
             max_trips_per_vehicle = max(
@@ -147,8 +155,8 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
 
     # Hub handling capacity applies to both outbound and inbound parcels.
     for h, cap in caps.items():
-        outbound = [v for (o, j, vt), v in x.items() if o == h]
-        inbound = [v for (o, j, vt), v in x.items() if j == h]
+        outbound = [v for (o, j, vt), v in x.items() if _hub_key(o) == h]
+        inbound = [v for (o, j, vt), v in x.items() if _hub_key(j) == h]
         if outbound:
             solver.Add(sum(outbound) <= cap)
         if inbound:
@@ -158,7 +166,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     for (o, j), _ in routes:
         u[(o, j)].SetBounds(0, solver.infinity())
         obj.SetCoefficient(u[(o, j)], UNMET_PENALTY)
-        rc = route.get((o, j))
+        rc = route.get((_hub_key(o), _hub_key(j)))
         if rc is None:
             continue
         for _, fr in fleet.iterrows():
@@ -190,7 +198,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             trips = int(round(y[key].solution_value()))
             if parcels == 0 and trips == 0:
                 continue
-            rc = route[(o, j)]
+            rc = route[(_hub_key(o), _hub_key(j))]
             trip_cost = float(fr.fixed_trip_cost) + float(fr.cost_per_km) * rc["distance_km"]
             rows.append({
                 "origin_hub": o,
@@ -210,7 +218,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             unmet_written = True
 
         if not unmet_written and route_unmet > 0:
-            rc = route.get((o, j), {})
+            rc = route.get((_hub_key(o), _hub_key(j)), {})
             rows.append({
                 "origin_hub": o,
                 "destination_hub": j,
