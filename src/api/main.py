@@ -7,7 +7,7 @@ from prometheus_client import generate_latest,CONTENT_TYPE_LATEST
 from src.core.config import API_KEY,APP_ENV,LOG_LEVEL,MODEL_VERSION,OPTIMIZER_VERSION,ALLOWED_ORIGINS
 from src.core.logging import configure_logging,new_request_id,request_id_ctx
 from src.core.observability import REQUESTS,LATENCY,OPTIMIZATION_RUNS,UNMET_PARCELS,FORECAST_MAE
-from src.api.schemas import ForecastRequest,OptimizeRequest,ScenarioRequest
+from src.api.schemas import ForecastRequest,OptimizeRequest,ScenarioRequest,RoutingRequest
 from src.data.demo import generate_demo
 from src.models.forecast import fit_forecaster
 from src.optimization.network import solve_network,build_cost_matrix
@@ -67,6 +67,27 @@ def optimize(req:OptimizeRequest):
   flows,m=solve_network(d,data['hubs'],fleet=data['fleet'],cost=data['cost'],capacity_multiplier=req.capacity_multiplier,service_level_target=req.service_level_target)
   m.update({'optimizer_version':OPTIMIZER_VERSION,'production_mode':prod,'forecast_date':data['forecast_date'],'request_id':request_id_ctx.get()}); UNMET_PARCELS.set(m['unmet_demand']); OPTIMIZATION_RUNS.labels(m['status']).inc(); return {'metrics':m,'flows':flows.to_dict(orient='records')}
  except Exception: OPTIMIZATION_RUNS.labels('error').inc(); logger.exception('optimization_failed'); raise HTTPException(400,{'detail':'Optimization request failed','request_id':request_id_ctx.get()})
+@app.post('/routing')
+def routing(req:RoutingRequest):
+ try:
+  from src.optimization.consolidated_routing import ConsolidatedRouteConfig,build_consolidated_routes
+  data,prod=api_get_data()
+  d=data['demand'].copy()
+  d['parcel_count']=(pd.to_numeric(d.parcel_count)*req.demand_multiplier).round()
+  cfg=ConsolidatedRouteConfig(
+   parcel_capacity=req.parcel_capacity,
+   max_route_hours=req.max_route_hours,
+   max_stops=req.max_stops,
+   fixed_trip_cost=req.fixed_trip_cost,
+   cost_per_km=req.cost_per_km,
+  )
+  routes,m=build_consolidated_routes(d,data['hubs'],data['cost'],cfg)
+  m.update({'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version']})
+  return {'metrics':m,'routes':routes.to_dict(orient='records')}
+ except Exception:
+  logger.exception('routing_failed')
+  raise HTTPException(400,{'detail':'Consolidated routing request failed','request_id':request_id_ctx.get()})
+
 @app.post('/scenario')
 def scenario(req:ScenarioRequest):
  try:
