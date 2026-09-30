@@ -320,7 +320,7 @@ with t2:
             "road_disruption",
             "combined",
         ],
-    , key="disruption_scenario"
+        key="disruption_scenario",
     )
     if st.button("Run disruption", key="run_disruption"):
         r = post("/scenario", {"scenario": scenario})
