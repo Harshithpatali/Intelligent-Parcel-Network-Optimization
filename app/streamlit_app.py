@@ -150,10 +150,11 @@ else:
         "Demo mode. Set ENVIRONMENT=production and configure the Supabase service-role key on the API backend."
     )
 
-hubs = pd.DataFrame(network["hubs"])
+hubs = pd.DataFrame(network.get("hubs", [])).copy()
 
-# Normalize production/demo hub schemas so the UI does not depend on one
-# database naming convention (e.g. lon vs longitude, lat vs latitude).
+# Normalize production/demo hub schemas so every downstream UI component
+# uses one canonical contract. Production data has historically used both
+# lng and lon, and some extracts use latitude/longitude.
 _hub_aliases = {
     "latitude": "lat",
     "longitude": "lon",
@@ -216,9 +217,14 @@ with t1:
                 ).fillna(0).clip(lower=1)
 
                 try:
+                    # Keep the chart contract explicit. This protects against
+                    # older production extracts that still expose lng.
+                    _plot_lon = "lon" if "lon" in network_plot.columns else "lng"
+                    if _plot_lon not in network_plot.columns:
+                        raise ValueError("No longitude column found in hub data")
                     fig = px.scatter(
                         network_plot,
-                        x="lon",
+                        x=_plot_lon,
                         y="lat",
                         size="capacity_parcels",
                         text="hub_id",
@@ -317,7 +323,11 @@ with t2:
     )
     if st.button("Run disruption"):
         r = post("/scenario", {"scenario": scenario})
-        st.json(r.json()["metrics"] if r.ok else {"error": r.text})
+        if r.ok:
+            body = r.json()
+            st.json(body.get("metrics", body))
+        else:
+            st.error(r.text)
 
 with t3:
     if prod:
@@ -357,22 +367,36 @@ with t5:
     if prod:
         r = get("/interventions")
         if r.ok:
-            it = pd.DataFrame(r.json()["rows"])
+            it = pd.DataFrame(r.json().get("rows", []))
             st.dataframe(it, use_container_width=True, hide_index=True)
             if not it.empty:
-                st.plotly_chart(
-                    px.scatter(
-                        it,
-                        x="intervention_cost",
-                        y="probability_target_met",
-                        size="expected_unmet_demand",
-                        hover_data=["bundle_id"],
-                        title="Intervention cost vs reliability",
-                    ),
-                    use_container_width=True,
-                )
+                required_chart_cols = {
+                    "intervention_cost",
+                    "probability_target_met",
+                    "expected_unmet_demand",
+                }
+                if required_chart_cols.issubset(it.columns):
+                    chart_df = it.copy()
+                    for _col in required_chart_cols:
+                        chart_df[_col] = pd.to_numeric(chart_df[_col], errors="coerce")
+                    chart_df = chart_df.dropna(subset=list(required_chart_cols))
+                    if not chart_df.empty:
+                        hover_cols = ["bundle_id"] if "bundle_id" in chart_df.columns else None
+                        st.plotly_chart(
+                            px.scatter(
+                                chart_df,
+                                x="intervention_cost",
+                                y="probability_target_met",
+                                size="expected_unmet_demand",
+                                hover_data=hover_cols,
+                                title="Intervention cost vs reliability",
+                            ),
+                            use_container_width=True,
+                        )
+                else:
+                    st.info("Intervention results loaded, but the reliability chart fields are not available in this run.")
                 feasible = (
-                    it[it.feasible == True] if "feasible" in it.columns else pd.DataFrame()
+                    it[it["feasible"].astype(bool)] if "feasible" in it.columns else pd.DataFrame()
                 )
                 st.info(f"Feasible bundles in latest evaluation: {len(feasible)}")
         else:
