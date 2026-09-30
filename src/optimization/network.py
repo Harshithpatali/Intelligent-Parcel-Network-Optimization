@@ -146,7 +146,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     for _, fr in fleet.iterrows():
         vt = str(fr.vehicle_type)
         hour_terms = [
-            float(route[(o, j)]["travel_time_hours"]) * y[(o, j, vt)]
+            float(route[(_hub_key(o), _hub_key(j))]["travel_time_hours"]) * y[(o, j, vt)]
             for (o, j), _ in routes
             if (o, j, vt) in y
         ]
