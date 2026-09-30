@@ -2,173 +2,151 @@
 
 ## Purpose
 
-The network-flow optimizer decides how much forecast demand should move between hubs. This layer converts those OD flows into physical multi-stop linehaul routes so a truck can serve several destination hubs on one trip.
+The network-flow optimizer decides how much forecast demand should move between hubs. This layer converts those OD flows into physical multi-stop linehaul routes so one vehicle can serve several destinations when the consolidation is operationally defensible.
 
-Example:
+The model is intentionally split into two decisions:
 
-```
-Hub 1 -> Hub 7: 12
-       -> Hub 9: 15
-       -> Hub 16: 10
+1. **Network allocation:** forecast OD flow and capacity/fleet constraints.
+2. **Physical routing:** vehicle selection, stop ordering, consolidation, and route feasibility.
 
-37 parcels / 40 capacity = 92.5% utilization
-```
+This makes the decision chain auditable instead of hiding everything inside one heuristic.
 
-## Method
+## Operational constraints
 
-The planner uses the existing Olist-calibrated 20-hub network, the real road-network distance/time matrix, and the production linehaul fleet availability.
+The route planner can enforce:
 
-For each origin hub:
+- parcel-count capacity
+- maximum route hours
+- maximum number of stops
+- weight capacity
+- cubic-volume capacity
+- loading time
+- per-stop service time
+- per-parcel unloading time
+- driver-break allowance
+- optional return-to-origin
+- empty-return cost factor
+- fleet-hour capacity by vehicle type
+- minimum practical load factor
+- maximum distance detour versus direct dispatch
+- maximum travel-time detour versus direct dispatch
 
-1. Aggregate forecast OD demand.
-2. Split any destination demand above vehicle capacity into capacity-sized chunks.
-3. Start a route with the largest remaining demand chunk.
-4. Add the nearest feasible destination chunk while respecting:
-   - vehicle capacity
-   - maximum route hours
-   - maximum stops
-5. Add stop service time to route duration.
-6. Score candidate sequences using distance detour, travel-time detour, and transport economics rather than distance alone.
-7. Respect the available linehaul fleet-hour budget; excess demand becomes explicitly unmet.
-8. Repeat until all feasible demand is assigned.
-7. Compare consolidated route cost with direct OD dispatch cost.
-
-The objective is operationally interpretable and explicitly separates physical efficiency from economic efficiency:
-
-[
-C_r = F + c_{km}D_r
-]
-
-where (F) is the fixed trip cost, (c_{km}) is the assumed cost per kilometre, and (D_r) is route distance.
-
-The consolidation score combines normalized distance ratio, normalized travel-time ratio, and consolidated/direct transport-cost ratio. This prevents a mathematically short route from being selected when its operating economics are worse.
-
-Capacity utilization is:
-
-[
-U_r = \frac{Q_r}{Q_{vehicle}}
-]
-
-The implementation is a deterministic consolidation heuristic rather than a claim of globally optimal VRP solutions. It is intentionally separated from the existing network-flow optimizer so both decisions can be inspected.
+When parcel-level `weight_kg` and `volume_m3` fields are present, the planner estimates OD-specific average weight and cube. Otherwise it uses explicit planning defaults rather than pretending the data contain exact physical measurements.
 
 ## Detour-aware consolidation
 
-The route builder does not select the next destination using nearest-neighbour distance alone.
+For a route sequence R, the planner compares:
 
-For a candidate sequence (R), it computes:
+- route distance D_R
+- direct-service distance D_0
+- route operating time T_R
+- direct-service time T_0
+- consolidated transport cost C_R
+- direct-dispatch cost C_0
 
-- route distance (D_R)
-- route time (T_R)
-- independent direct-service distance (D_0)
-- independent direct-service time (T_0)
-
-and the normalized detours:
+Normalized detours are:
 
 [
-ho_D = D_R / D_0,qquad
-ho_T = T_R / T_0
+rho_D = D_R / D_0,qquad
+rho_T = T_R / T_0
 ]
 
-A sequence that is no better than the direct baseline on both dimensions is treated as dominated and is not selected.
+A candidate sequence is rejected when either detour exceeds the configured guardrail.
 
-Candidate additions also compare the marginal leg from the current route endpoint with the direct origin-to-candidate leg. The final candidate score combines the full-route and marginal distance/time ratios using explicit configurable distance and time weights.
+The candidate score combines:
 
-This prevents a locally close destination from creating a globally poor tour such as (A\rightarrow B\rightarrow C) when another ordering is shorter and/or faster.
+- distance ratio
+- time ratio
+- economic ratio
+- a marginal-leg check from the current endpoint
 
-The implementation uses OSRM-derived distance and travel time for these comparisons; no geometric distance approximation is used when the road matrix is available.
+Thus the planner does not use a nearest-neighbour rule in isolation. For example, it can reject A -> B -> C when A -> C -> B is both shorter and faster.
 
-## API
+For small stop sets, feasible permutations are evaluated directly. The default of five stops means at most 5! = 120 orderings for one candidate route.
 
-`POST /routing`
+## Direct-dispatch economics
 
-Default configuration:
+For k independent destinations:
 
-- vehicle capacity: 40 parcels
-- maximum route time: 16 hours
-- maximum stops: 5
-- linehaul fleet: read from `logistics_fleet` (`linehaul_truck`)
-- fixed trip cost: 45
-- cost per km: 0.075
+[
+C_0 = kF + c_{km}D_0
+]
 
-The endpoint returns route sequences, parcel allocation by stop, distance, time, cost, utilization, service level, and modeled savings versus direct dispatches.
+For one consolidated route:
 
-## Folium dashboard
+[
+C_R = F + c_{km}D_R
+]
 
-The Streamlit **Routing** tab renders:
+where F is the fixed trip charge and c_km is the modeled distance charge.
 
-- candidate hub markers
-- one colored line per consolidated route
-- route tooltips/popups
+The planner reports modeled savings:
+
+[
+S = C_0 - C_R
+]
+
+A positive S is only a modeled scenario result; it is not a claim about any real carrier's costs.
+
+## Heterogeneous fleet
+
+The API accepts `vehicle_type=any` or a specific fleet type. When a fleet table is available, the routing layer evaluates the eligible vehicle configurations and respects each type's:
+
+- parcel capacity
+- max trip hours
+- fixed trip cost
+- cost per kilometre
+- vehicle count
+- operating hours
+
+Fleet hours are tracked separately by vehicle type, so a route does not consume capacity from an unrelated vehicle class.
+
+## Unmet-demand accounting
+
+Every OD quantity remains in the denominator. When a route cannot be built, the planner reports an explicit reason such as:
+
+- `missing_road_route`
+- `route_exceeds_max_hours`
+- `no_feasible_vehicle_or_route`
+
+This prevents infeasible demand from disappearing silently.
+
+## Dashboard
+
+The Streamlit **Routing** tab is the final operational map. It shows:
+
+- hub markers
+- one line per planned route
 - stop order
-- parcel count
-- capacity utilization
-- route distance/time/cost
-- modeled cost savings
+- parcels per route and per stop
+- parcel, weight and cube utilization
+- distance and total operating time
+- detour metrics
+- modeled cost and savings
+- unmet-demand reasons
 
-The map lines connect hub coordinates. They are visualization connectors, not turn-by-turn road geometry; routing distances and travel times still come from the OSRM-backed road matrix.
+The map is a visualization of hub-to-hub route connectors. When the OSRM matrix is populated, the optimizer's distance/time calculations use those road-network values.
 
-## Limitations
+## Known limitations
 
-This is a multi-stop linehaul consolidation layer, not a complete vehicle-routing system. It does not yet model:
+This is not a complete last-mile VRPTW solver. It still does not claim:
 
-- time windows
-- parcel-level pickup/delivery sequencing
-- loading/unloading service times
-- driver shift regulations
-- weight/volume capacity constraints (the current model uses parcel-count capacity)
-- stochastic traffic
-- exact road geometry for every displayed route
-- cross-origin vehicle repositioning
+- turn-by-turn road geometry in the map
+- live traffic
+- exact driver legal rules for a specific jurisdiction
+- parcel-level delivery time windows
+- cross-origin tractor repositioning
+- real carrier rates
+- exact loading-bay appointment logic
 
-Those can be added later without changing the upstream forecasting and resilience layers.
+Those require operational feeds and policy calibration.
 
+## Production interpretation
 
-## Distance + time optimal stop ordering
+Use the project as an open-data logistics research system:
 
-For every multi-stop candidate, the planner evaluates feasible stop permutations rather than accepting the first greedy order.
+- Olist provides observed historical order/parcel behaviour.
+- OSM/OSRM provides open road-network routing when populated.
+- Fleet, costs, service times and operating limits are scenario assumptions unless independently calibrated.
 
-For two destinations (B) and (C) from origin (A), it explicitly compares:
-
-[
-A \rightarrow B \rightarrow C
-]
-
-against
-
-[
-A \rightarrow C \rightarrow B
-]
-
-The first route has:
-
-[
-D_{ABC}=D_{AB}+D_{BC}
-]
-
-and the alternative has:
-
-[
-D_{ACB}=D_{AC}+D_{CB}.
-]
-
-The same comparison is performed for travel time:
-
-[
-T_{ABC}=T_{AB}+T_{BC},
-qquad
-T_{ACB}=T_{AC}+T_{CB}.
-]
-
-Therefore, if the first ordering has both higher distance and higher travel time than another feasible ordering, it is rejected.
-
-For example, if (D_{AB}>D_{AC}) and the common (B-C) leg is unchanged, then:
-
-[
-D_{AB}+D_{BC} > D_{AC}+D_{BC},
-]
-
-so sending the truck to (B) before (C) is not the preferred ordering. The planner can instead use (A\rightarrow C\rightarrow B), provided its total route time remains feasible.
-
-For more than two stops, the same principle is generalized by evaluating feasible permutations of the small stop set. The current default of five stops means at most (5!=120) orderings are evaluated for a candidate route.
-
-The route must also satisfy the maximum route-time constraint and available fleet-hour budget.
+The system should therefore be presented as a mathematically constrained parcel-network optimization prototype, not as proprietary carrier software.
