@@ -124,8 +124,23 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
     ]
     if not routes and local_parcels <= 0:
         raise ValueError("Demand contains no OD routes")
+    if not routes:
+        total_requested = float(d["parcel_count"].sum())
+        return pd.DataFrame(), {
+            "status": "optimal",
+            "total_transport_cost": 0.0,
+            "unmet_demand": 0.0,
+            "service_level": 1.0,
+            "service_level_target": service_level_target,
+            "objective_with_unmet_penalty": 0.0,
+            "total_parcels": total_requested,
+            "network_served_parcels": 0.0,
+            "local_parcels_assumed_served": local_parcels,
+            "fleet_vehicle_types": int(fleet.vehicle_type.nunique()),
+            "routes_optimized": 0,
+        }
 
-    x = {}  # parcels by route and vehicle type
+    x = {}  # integer parcels by route and vehicle type
     y = {}  # integer trips by route and vehicle type
     u = {}  # unmet parcels by route
 
@@ -147,7 +162,7 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             )
             max_trips = int(fr.vehicle_count) * max_trips_per_vehicle
             y[(o, j, vt)] = solver.IntVar(0, max_trips, f"trips_{o}_{j}_{vt}")
-            x[(o, j, vt)] = solver.NumVar(0, solver.infinity(), f"parcels_{o}_{j}_{vt}")
+            x[(o, j, vt)] = solver.IntVar(0, solver.infinity(), f"parcels_{o}_{j}_{vt}")
             solver.Add(
                 x[(o, j, vt)] <= float(fr.parcel_capacity) * y[(o, j, vt)]
             )
@@ -181,10 +196,31 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
         if inbound:
             solver.Add(sum(inbound) <= cap)
 
-    obj = solver.Objective()
+    # Lexicographic objective:
+    #   1) minimize unmet demand first;
+    #   2) among maximum-service solutions, minimize transport cost.
+    #
+    # This is more robust than relying on a large unmet-demand penalty.  It
+    # guarantees that a feasible parcel movement is never left unmet merely
+    # because of fixed-charge economics.
+    unmet_objective = solver.Objective()
+    for key in u:
+        unmet_objective.SetCoefficient(u[key], 1.0)
+    unmet_objective.SetMinimization()
+
+    status = solver.Solve()
+    if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+        raise RuntimeError("Network optimization infeasible")
+
+    minimum_unmet = float(sum(var.solution_value() for var in u.values()))
+
+    # Lock the service level at the best value found in stage 1.
+    if u:
+        solver.Add(sum(u.values()) <= minimum_unmet + 1e-7)
+        solver.Add(sum(u.values()) >= minimum_unmet - 1e-7)
+
+    transport_objective = solver.Objective()
     for (o, j), _ in routes:
-        u[(o, j)].SetBounds(0, solver.infinity())
-        obj.SetCoefficient(u[(o, j)], UNMET_PENALTY)
         rc = route.get((_hub_key(o), _hub_key(j)))
         if rc is None:
             continue
@@ -194,11 +230,8 @@ def solve_network(demand, hubs, cost=None, capacity_multiplier=1.0,
             if key not in x:
                 continue
             trip_cost = float(fr.fixed_trip_cost) + float(fr.cost_per_km) * rc["distance_km"]
-            # Fixed-charge objective: dispatching a trip incurs its full
-            # fixed + distance cost regardless of load. Charging x (parcels)
-            # here would make lightly loaded trips appear artificially cheap.
-            obj.SetCoefficient(y[key], trip_cost)
-    obj.SetMinimization()
+            transport_objective.SetCoefficient(y[key], trip_cost)
+    transport_objective.SetMinimization()
 
     status = solver.Solve()
     if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
