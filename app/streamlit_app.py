@@ -204,19 +204,61 @@ with t1:
     if not hubs.empty:
         left, right = st.columns([1.5, 1])
         with left:
-            st.plotly_chart(
-                px.scatter(
-                    hubs,
-                    x="lon",
-                    y="lat",
-                    size="capacity_parcels",
-                    text="hub_id",
-                    hover_name="city",
-                    title="Candidate hub capacity footprint",
-                    color_discrete_sequence=["#4D148C"],
-                ),
-                use_container_width=True,
-            )
+            # Plot only validated geographic records. Production tables can contain
+            # null/non-numeric coordinates while the rest of the network remains valid.
+            network_plot = hubs.loc[
+                hubs["lat"].notna() & hubs["lon"].notna()
+            ].copy()
+
+            if not network_plot.empty:
+                network_plot["capacity_parcels"] = pd.to_numeric(
+                    network_plot["capacity_parcels"], errors="coerce"
+                ).fillna(0).clip(lower=1)
+
+                try:
+                    fig = px.scatter(
+                        network_plot,
+                        x="lon",
+                        y="lat",
+                        size="capacity_parcels",
+                        text="hub_id",
+                        hover_name="city",
+                        title="Candidate hub capacity footprint",
+                        color_discrete_sequence=["#4D148C"],
+                        custom_data=["capacity_parcels"],
+                    )
+                    fig.update_traces(
+                        marker={"line": {"width": 1.5, "color": "#FF6600"}},
+                        textposition="top center",
+                        hovertemplate=(
+                            "<b>%{hovertext}</b><br>"
+                            "Hub: %{text}<br>"
+                            "Longitude: %{x:.4f}<br>"
+                            "Latitude: %{y:.4f}<br>"
+                            "Capacity: %{customdata[0]:,.0f} parcels"
+                            "<extra></extra>"
+                        ),
+                    )
+                    fig.update_layout(
+                        height=430,
+                        margin={"l": 10, "r": 10, "t": 55, "b": 10},
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(255,255,255,.72)",
+                        xaxis_title="Longitude",
+                        yaxis_title="Latitude",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except (ValueError, TypeError, KeyError) as exc:
+                    st.warning(
+                        "The production hub coordinates could not be plotted. "
+                        "The underlying network data is still available below."
+                    )
+                    st.caption(f"Chart validation: {type(exc).__name__}")
+            else:
+                st.info(
+                    "No valid hub coordinates are available for the overview chart. "
+                    "The operational map remains available on the Routing page."
+                )
         with right:
             fleet_df = pd.DataFrame(network.get("fleet", []))
             if not fleet_df.empty:
