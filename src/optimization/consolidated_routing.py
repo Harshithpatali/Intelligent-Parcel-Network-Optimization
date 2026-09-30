@@ -180,28 +180,19 @@ def _detour_evaluation(origin, sequence, lookup, config):
     }
 
 def _best_stop_sequence(origin, stops, lookup, config):
-    """Choose a feasible non-dominated ordering using distance and time."""
+    """Choose a feasible sequence using distance, time, and economics."""
     best = None
     for sequence in itertools.permutations(stops):
         evaluation = _detour_evaluation(origin, sequence, lookup, config)
         if evaluation is None or evaluation["travel_time_hours"] > config.max_route_hours + 1e-9:
             continue
-        if evaluation["dominated"]:
-            continue
-        candidate = (
-            evaluation["detour_score"],
-            evaluation["distance_ratio"],
-            evaluation["time_ratio"],
-            tuple(str(x) for x in sequence),
-            sequence,
-            evaluation,
-        )
-        if best is None or candidate[:4] < best[:4]:
+        candidate = (evaluation["detour_score"], evaluation["economic_ratio"], evaluation["distance_km"], evaluation["travel_time_hours"], tuple(str(x) for x in sequence), sequence, evaluation)
+        if best is None or candidate[:5] < best[:5]:
             best = candidate
     if best is None:
         return None
-    evaluation = best[5]
-    evaluation["sequence"] = list(best[4])
+    evaluation = best[6].copy()
+    evaluation["sequence"] = list(best[5])
     return evaluation
 
 def _build_route(
