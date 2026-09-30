@@ -16,6 +16,8 @@ class ConsolidatedRouteConfig:
     max_stops: int = 5
     vehicle_count: int = 10
     operating_hours_per_day: float = 16.0
+    distance_weight: float = 0.5
+    time_weight: float = 0.5
 
 
 def _route_lookup(cost: pd.DataFrame) -> dict[tuple[object, object], dict[str, float]]:
@@ -120,32 +122,74 @@ def _sequence_metrics(origin, sequence, lookup):
     return distance, hours
 
 
-def _best_stop_sequence(origin, stops, lookup, max_route_hours):
-    """
-    Evaluate feasible permutations of a small stop set.
 
-    For two stops A->B->C versus A->C->B, the planner explicitly checks
-    both distance and time. A route is not accepted merely because it
-    carries more parcels: a dominated sequence (higher distance AND higher
-    travel time) is rejected in favour of the non-dominated ordering.
-    """
-    best = None
-    for sequence in itertools.permutations(stops):
-        metrics = _sequence_metrics(origin, sequence, lookup)
-        if metrics is None:
-            continue
-        distance, hours = metrics
-        if hours > max_route_hours + 1e-9:
-            continue
-        candidate = (distance, hours, tuple(str(x) for x in sequence), sequence)
-        if best is None or candidate[:3] < best[:3]:
-            best = candidate
-    return None if best is None else {
-        "sequence": list(best[3]),
-        "distance_km": best[0],
-        "travel_time_hours": best[1],
+def _direct_baseline(origin, stops, lookup):
+    """Independent origin-to-destination distance/time baseline."""
+    distance = 0.0
+    hours = 0.0
+    for destination in stops:
+        leg = _travel(lookup, origin, destination)
+        if leg is None:
+            return None
+        distance += leg["distance_km"]
+        hours += leg["travel_time_hours"]
+    return distance, hours
+
+
+def _detour_evaluation(origin, sequence, lookup, config):
+    """Evaluate a sequence against independent direct dispatches."""
+    route = _sequence_metrics(origin, sequence, lookup)
+    baseline = _direct_baseline(origin, sequence, lookup)
+    if route is None or baseline is None:
+        return None
+    route_distance, route_time = route
+    base_distance, base_time = baseline
+    distance_ratio = route_distance / max(base_distance, 1e-9)
+    time_ratio = route_time / max(base_time, 1e-9)
+    dominated = (
+        distance_ratio >= 1.0 - 1e-9
+        and time_ratio >= 1.0 - 1e-9
+        and (distance_ratio > 1.0 + 1e-9 or time_ratio > 1.0 + 1e-9)
+    )
+    score = config.distance_weight * distance_ratio + config.time_weight * time_ratio
+    return {
+        "distance_km": route_distance,
+        "travel_time_hours": route_time,
+        "baseline_distance_km": base_distance,
+        "baseline_time_hours": base_time,
+        "distance_ratio": distance_ratio,
+        "time_ratio": time_ratio,
+        "distance_detour_pct": (distance_ratio - 1.0) * 100.0,
+        "time_detour_pct": (time_ratio - 1.0) * 100.0,
+        "detour_score": score,
+        "dominated": dominated,
     }
 
+
+def _best_stop_sequence(origin, stops, lookup, config):
+    """Choose a feasible non-dominated ordering using distance and time."""
+    best = None
+    for sequence in itertools.permutations(stops):
+        evaluation = _detour_evaluation(origin, sequence, lookup, config)
+        if evaluation is None or evaluation["travel_time_hours"] > config.max_route_hours + 1e-9:
+            continue
+        if evaluation["dominated"]:
+            continue
+        candidate = (
+            evaluation["detour_score"],
+            evaluation["distance_ratio"],
+            evaluation["time_ratio"],
+            tuple(str(x) for x in sequence),
+            sequence,
+            evaluation,
+        )
+        if best is None or candidate[:4] < best[:4]:
+            best = candidate
+    if best is None:
+        return None
+    evaluation = best[5]
+    evaluation["sequence"] = list(best[4])
+    return evaluation
 
 def _build_route(
     origin,
@@ -237,6 +281,8 @@ def build_consolidated_routes(
         raise ValueError("Route capacity, stop limit, and route hours must be positive")
     if config.vehicle_count <= 0 or config.operating_hours_per_day <= 0:
         raise ValueError("Vehicle count and operating hours must be positive")
+    if config.distance_weight < 0 or config.time_weight < 0 or config.distance_weight + config.time_weight <= 0:
+        raise ValueError("Distance/time weights must be non-negative and not both zero")
 
     required = {"origin_hub", "destination_hub", "parcel_count"}
     missing = required - set(demand.columns)
@@ -345,6 +391,11 @@ def build_consolidated_routes(
                 "travel_time_hours": route["travel_time_hours"],
                 "transport_cost": route["transport_cost"],
                 "capacity_utilization": route["capacity_utilization"],
+                "distance_ratio": route["distance_ratio"],
+                "time_ratio": route["time_ratio"],
+                "distance_detour_pct": route["distance_detour_pct"],
+                "time_detour_pct": route["time_detour_pct"],
+                "detour_score": route["detour_score"],
                 "vehicle_type": route["vehicle_type"],
                 "status": "consolidated_route",
             }
