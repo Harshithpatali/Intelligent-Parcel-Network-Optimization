@@ -12,7 +12,7 @@ else: st.warning("Demo mode. Set ENVIRONMENT=production and configure the Supaba
 hubs=pd.DataFrame(network["hubs"]); c1,c2,c3,c4=st.columns(4); c1.metric("Candidate hubs",summary["hubs"]); c2.metric("OD demand rows",summary["demand_rows"]); c3.metric("Routes",network.get("routes",0)); c4.metric("Mode","Production" if prod else "Demo")
 t1,t2,t3,t4,t5=st.tabs(["Network","Optimization","Resilience","Root Cause","Interventions"])
 with t1:
- st.subheader("Candidate hub network"); st.plotly_chart(px.scatter(hubs,x="lon",y="lat",size="capacity_parcels",text="hub_id",hover_name="city",title="Olist-calibrated candidate hubs"),use_container_width=True); st.dataframe(hubs,use_container_width=True,hide_index=True)
+ st.subheader("Candidate hub network"); st.plotly_chart(px.scatter(hubs,x="lng",y="lat",size="capacity_parcels",text="hub_id",hover_name="representative_zip",title="Olist-calibrated candidate hubs"),use_container_width=True); st.dataframe(hubs,use_container_width=True,hide_index=True)
 with t2:
  a,b,c=st.columns(3); surge=a.slider("Demand multiplier",.5,2.,1.,.05); cap=b.slider("Capacity multiplier",.5,3.,1.,.05); service=c.slider("Service target",.80,.99,.95,.01)
  if st.button("Run optimization",type="primary"):
