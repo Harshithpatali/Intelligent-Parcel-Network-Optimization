@@ -47,6 +47,32 @@ U_r = \frac{Q_r}{Q_{vehicle}}
 
 The implementation is a deterministic consolidation heuristic rather than a claim of globally optimal VRP solutions. It is intentionally separated from the existing network-flow optimizer so both decisions can be inspected.
 
+## Detour-aware consolidation
+
+The route builder does not select the next destination using nearest-neighbour distance alone.
+
+For a candidate sequence (R), it computes:
+
+- route distance (D_R)
+- route time (T_R)
+- independent direct-service distance (D_0)
+- independent direct-service time (T_0)
+
+and the normalized detours:
+
+[
+ho_D = D_R / D_0,qquad
+ho_T = T_R / T_0
+]
+
+A sequence that is no better than the direct baseline on both dimensions is treated as dominated and is not selected.
+
+Candidate additions also compare the marginal leg from the current route endpoint with the direct origin-to-candidate leg. The final candidate score combines the full-route and marginal distance/time ratios using explicit configurable distance and time weights.
+
+This prevents a locally close destination from creating a globally poor tour such as (A\rightarrow B\rightarrow C) when another ordering is shorter and/or faster.
+
+The implementation uses OSRM-derived distance and travel time for these comparisons; no geometric distance approximation is used when the road matrix is available.
+
 ## API
 
 `POST /routing`
