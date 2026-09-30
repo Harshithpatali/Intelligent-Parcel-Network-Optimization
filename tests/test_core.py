@@ -299,6 +299,7 @@ def test_consolidated_route_order_checks_distance_and_time():
             max_stops=5,
             vehicle_count=1,
             operating_hours_per_day=16,
+            service_time_minutes_per_stop=0,
         ),
     )
 
@@ -339,6 +340,7 @@ def test_consolidated_routing_reorders_by_distance_and_time():
             parcel_capacity=40,
             max_route_hours=16,
             max_stops=2,
+            service_time_minutes_per_stop=0,
         ),
     )
 
