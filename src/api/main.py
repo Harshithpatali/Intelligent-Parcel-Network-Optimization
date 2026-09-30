@@ -84,6 +84,8 @@ def routing(req:RoutingRequest):
    max_stops=req.max_stops,
    fixed_trip_cost=req.fixed_trip_cost,
    cost_per_km=req.cost_per_km,
+   distance_weight=req.distance_weight,
+   time_weight=req.time_weight,
    vehicle_count=vehicle_count,
    operating_hours_per_day=operating_hours,
   )
