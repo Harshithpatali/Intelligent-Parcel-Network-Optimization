@@ -421,6 +421,28 @@ with t6:
                 ]
                 keep = [col for col in keep if col in display.columns]
                 st.dataframe(display[keep], use_container_width=True, hide_index=True)
+            else:
+                st.markdown("### Network map")
+                st.caption("No feasible consolidated routes were returned. The live hub network remains visible so you can inspect the network before relaxing constraints.")
+                coord = {str(row.hub_id): (float(row.lat), float(row.lng)) for row in hubs.itertuples() if pd.notna(row.lat) and pd.notna(row.lng)}
+                if coord:
+                    fmap = folium.Map(
+                        location=[sum(v[0] for v in coord.values()) / len(coord), sum(v[1] for v in coord.values()) / len(coord)],
+                        zoom_start=5, control_scale=True, tiles="CartoDB positron",
+                    )
+                    folium.TileLayer("OpenStreetMap", name="Road map", control=True).add_to(fmap)
+                    for hub_id, (lat, lon) in coord.items():
+                        hub_row = hubs[hubs["hub_id"].astype(str).eq(hub_id)].iloc[0]
+                        folium.CircleMarker(
+                            location=[lat, lon], radius=10, color="#4D148C",
+                            fill=True, fill_color="#4D148C", fill_opacity=.95,
+                            tooltip=f"Hub {hub_id} · {hub_row.get('city','')}",
+                            popup=f"<b>{hub_id} · {hub_row.get('city','')}</b><br>Capacity: {float(hub_row.get('capacity_parcels',0)):,.0f} parcels",
+                        ).add_to(fmap)
+                    folium.LayerControl().add_to(fmap)
+                    components.html(fmap.get_root().render(), height=760, scrolling=False)
+                else:
+                    st.warning("Hub coordinates are unavailable, so the operational map cannot be rendered.")
         else:
             st.error(r.text)
 
