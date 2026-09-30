@@ -53,7 +53,12 @@ def summary():
 @app.get('/network')
 def network():
  data,prod=api_get_data()
- fleet=data['fleet']
+ fleet=data.get('fleet')
+ if fleet is None or fleet.empty:
+  fleet_rows=[]
+ else:
+  cols=[c for c in ['vehicle_type','vehicle_count','parcel_capacity','operating_hours_per_day','fixed_trip_cost','cost_per_km','max_trip_hours'] if c in fleet.columns]
+  fleet_rows=fleet[cols].where(pd.notnull(fleet[cols]),None).to_dict(orient='records')
  return {
   'hubs':data['hubs'].to_dict(orient='records'),
   'routes':int(len(data['cost'])),
@@ -62,8 +67,9 @@ def network():
   'forecast_date':data['forecast_date'],
   'model_version':data['model_version'],
   'optimizer_version':OPTIMIZER_VERSION,
-  'fleet':fleet.to_dict(orient='records'),
+  'fleet':fleet_rows,
  }
+
 @app.post('/forecast')
 def forecast(req:ForecastRequest):
  if APP_ENV.lower() in {'production','prod'}:
