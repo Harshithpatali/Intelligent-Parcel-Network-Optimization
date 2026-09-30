@@ -167,3 +167,65 @@ def test_trip_cost_is_fixed_charge_not_per_parcel():
     assert row["transport_cost"] == pytest.approx(26.0)
     assert row["capacity_utilization"] == pytest.approx(1 / 40)
     assert row["status"] == "served"
+
+
+
+def test_consolidated_routing_packs_multiple_destinations():
+    from src.optimization.consolidated_routing import (
+        ConsolidatedRouteConfig,
+        build_consolidated_routes,
+    )
+
+    demand = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "parcel_count": 12},
+        {"origin_hub": 1, "destination_hub": 3, "parcel_count": 15},
+        {"origin_hub": 1, "destination_hub": 4, "parcel_count": 10},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": 1, "lat": 0.0, "lng": 0.0, "capacity_parcels": 100},
+        {"hub_id": 2, "lat": 1.0, "lng": 1.0, "capacity_parcels": 100},
+        {"hub_id": 3, "lat": 2.0, "lng": 2.0, "capacity_parcels": 100},
+        {"hub_id": 4, "lat": 3.0, "lng": 3.0, "capacity_parcels": 100},
+    ])
+    cost = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "distance_km": 100.0, "travel_time_hours": 2.0},
+        {"origin_hub": 1, "destination_hub": 3, "distance_km": 80.0, "travel_time_hours": 1.5},
+        {"origin_hub": 1, "destination_hub": 4, "distance_km": 70.0, "travel_time_hours": 1.0},
+        {"origin_hub": 2, "destination_hub": 3, "distance_km": 40.0, "travel_time_hours": 1.0},
+        {"origin_hub": 3, "destination_hub": 4, "distance_km": 30.0, "travel_time_hours": 0.75},
+    ])
+    cfg = ConsolidatedRouteConfig(
+        parcel_capacity=40,
+        max_route_hours=16,
+        max_stops=5,
+        fixed_trip_cost=45.0,
+        cost_per_km=0.075,
+    )
+
+    routes, metrics = build_consolidated_routes(demand, hubs, cost, cfg)
+
+    assert len(routes) == 1
+    assert routes.iloc[0]["parcels"] == pytest.approx(37.0)
+    assert routes.iloc[0]["stops"] == 3
+    assert routes.iloc[0]["capacity_utilization"] == pytest.approx(37 / 40)
+    assert metrics["estimated_cost_savings"] > 0
+
+
+def test_consolidated_routing_marks_infeasible_routes_unmet():
+    from src.optimization.consolidated_routing import build_consolidated_routes
+
+    demand = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "parcel_count": 5},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": 1, "lat": 0.0, "lng": 0.0},
+        {"hub_id": 2, "lat": 1.0, "lng": 1.0},
+    ])
+    cost = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "distance_km": 1000.0, "travel_time_hours": 20.0},
+    ])
+
+    _, metrics = build_consolidated_routes(demand, hubs, cost)
+
+    assert metrics["unmet_parcels"] == pytest.approx(5.0)
+    assert metrics["service_level"] == pytest.approx(0.0)
