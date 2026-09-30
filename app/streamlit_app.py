@@ -517,9 +517,9 @@ with t6:
                         location=[sum(v[0] for v in coord.values()) / len(coord), sum(v[1] for v in coord.values()) / len(coord)],
                         zoom_start=5,
                         control_scale=True,
-                        tiles="CartoDB positron",
+                        tiles="OpenStreetMap",
                     )
-                    folium.TileLayer("OpenStreetMap", name="Road map", control=True).add_to(fmap)
+                    folium.TileLayer("OpenStreetMap", name="Road map", control=True, show=False).add_to(fmap)
 
                     palette = ["#4D148C", "#FF6600", "#6B2BA8", "#D95700", "#7E57C2", "#E87500", "#3F0D73", "#C44D00"]
 
