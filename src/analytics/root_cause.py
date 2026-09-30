@@ -34,7 +34,18 @@ def hub_pressure_table(demand:pd.DataFrame,hubs:pd.DataFrame):
     out=d.groupby("origin_hub",as_index=False).demand.sum().rename(columns={"origin_hub":"hub_id","demand":"outbound_demand"})
     inn=d.groupby("destination_hub",as_index=False).demand.sum().rename(columns={"destination_hub":"hub_id","demand":"inbound_demand"})
     out=out.merge(inn,on="hub_id",how="outer").fillna(0)
-    out=out.merge(hubs[["hub_id","capacity_parcels"]],on="hub_id",how="left")
+    hub_capacity=hubs.copy()
+    # Accept either the canonical capacity column or a dataframe that has
+    # already been merged and therefore contains pandas _x/_y suffixes.
+    if "capacity_parcels" not in hub_capacity.columns:
+        if "capacity_parcels_y" in hub_capacity.columns:
+            hub_capacity=hub_capacity.rename(columns={"capacity_parcels_y":"capacity_parcels"})
+        elif "capacity_parcels_x" in hub_capacity.columns:
+            hub_capacity=hub_capacity.rename(columns={"capacity_parcels_x":"capacity_parcels"})
+        else:
+            raise ValueError("Hub frame is missing 'capacity_parcels'.")
+    hub_capacity=hub_capacity[["hub_id","capacity_parcels"]].drop_duplicates("hub_id")
+    out=out.merge(hub_capacity,on="hub_id",how="left")
     if out["capacity_parcels"].isna().any():
         missing_hubs=out.loc[out["capacity_parcels"].isna(),"hub_id"].tolist()
         raise ValueError(f"Missing calibrated capacity for hubs: {missing_hubs}")
