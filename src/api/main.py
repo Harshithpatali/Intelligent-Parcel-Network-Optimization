@@ -85,11 +85,16 @@ def routing(req:RoutingRequest):
   data,prod=api_get_data()
   d=data['demand'].copy()
   d['parcel_count']=(pd.to_numeric(d.parcel_count)*req.demand_multiplier).round()
-  linehaul=data['fleet']
-  linehaul=linehaul[linehaul['vehicle_type'].astype(str)=='linehaul_truck'].head(1) if linehaul is not None and not linehaul.empty else pd.DataFrame()
-  vehicle_count=int(linehaul.iloc[0]['vehicle_count']) if not linehaul.empty else 10
-  operating_hours=float(linehaul.iloc[0]['operating_hours_per_day']) if not linehaul.empty else 16.0
+
+  fleet=data.get('fleet')
+  selected_fleet=fleet
+  if selected_fleet is not None and not selected_fleet.empty and req.vehicle_type!='any':
+   selected_fleet=selected_fleet[selected_fleet['vehicle_type'].astype(str)==req.vehicle_type].copy()
+   if selected_fleet.empty:
+    raise ValueError(f"Vehicle type '{req.vehicle_type}' is not available")
+
   cfg=ConsolidatedRouteConfig(
+   vehicle_type=req.vehicle_type,
    parcel_capacity=req.parcel_capacity,
    max_route_hours=req.max_route_hours,
    max_stops=req.max_stops,
@@ -99,11 +104,26 @@ def routing(req:RoutingRequest):
    time_weight=req.time_weight,
    economic_weight=req.economic_weight,
    service_time_minutes_per_stop=req.service_time_minutes_per_stop,
-   vehicle_count=vehicle_count,
-   operating_hours_per_day=operating_hours,
+   max_weight_kg=req.max_weight_kg,
+   max_volume_m3=req.max_volume_m3,
+   loading_minutes=req.loading_minutes,
+   unloading_minutes_per_parcel=req.unloading_minutes_per_parcel,
+   driver_break_hours=req.driver_break_hours,
+   return_to_origin=req.return_to_origin,
+   empty_return_factor=req.empty_return_factor,
+   max_detour_pct=req.max_detour_pct,
+   max_time_detour_pct=req.max_time_detour_pct,
+   min_capacity_utilization=req.min_capacity_utilization,
+   staging_buffer_hours=req.staging_buffer_hours,
   )
-  routes,m=build_consolidated_routes(d,data['hubs'],data['cost'],cfg)
-  m.update({'production_mode':prod,'forecast_date':data['forecast_date'],'model_version':data['model_version'],'fleet_vehicle_count':vehicle_count,'fleet_operating_hours':operating_hours,'fleet_vehicle_type':'linehaul_truck'})
+  routes,m=build_consolidated_routes(d,data['hubs'],data['cost'],cfg,fleet=selected_fleet)
+  m.update({
+   'production_mode':prod,
+   'forecast_date':data['forecast_date'],
+   'model_version':data['model_version'],
+   'fleet_vehicle_type':req.vehicle_type,
+   'request_id':request_id_ctx.get()
+  })
   return {'metrics':m,'routes':routes.to_dict(orient='records')}
  except Exception:
   logger.exception('routing_failed')
