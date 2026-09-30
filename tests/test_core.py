@@ -257,6 +257,7 @@ def test_consolidated_routing_respects_fleet_hours():
         max_stops=3,
         vehicle_count=1,
         operating_hours_per_day=8,
+        service_time_minutes_per_stop=0,
     )
 
     _, metrics = build_consolidated_routes(demand, hubs, cost, cfg)
