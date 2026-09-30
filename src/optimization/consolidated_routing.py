@@ -1,0 +1,288 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+import pandas as pd
+
+
+@dataclass(frozen=True)
+class ConsolidatedRouteConfig:
+    vehicle_type: str = "linehaul_truck"
+    parcel_capacity: int = 40
+    max_route_hours: float = 16.0
+    fixed_trip_cost: float = 45.0
+    cost_per_km: float = 0.075
+    max_stops: int = 5
+
+
+def _route_lookup(cost: pd.DataFrame) -> dict[tuple[object, object], dict[str, float]]:
+    required = {
+        "origin_hub",
+        "destination_hub",
+        "distance_km",
+        "travel_time_hours",
+    }
+    missing = required - set(cost.columns)
+    if missing:
+        raise ValueError(f"Cost matrix missing columns: {sorted(missing)}")
+
+    lookup: dict[tuple[object, object], dict[str, float]] = {}
+    for row in cost.itertuples(index=False):
+        lookup[(row.origin_hub, row.destination_hub)] = {
+            "distance_km": float(row.distance_km),
+            "travel_time_hours": float(row.travel_time_hours),
+        }
+    return lookup
+
+
+def _chunks(quantity: float, capacity: int) -> list[float]:
+    remaining = float(quantity)
+    out: list[float] = []
+    while remaining > 1e-9:
+        take = min(float(capacity), remaining)
+        out.append(take)
+        remaining -= take
+    return out
+
+
+def _travel(lookup, origin, destination):
+    return lookup.get((origin, destination))
+
+
+def _build_route(
+    origin,
+    first_stop,
+    first_load,
+    chunks,
+    lookup,
+    config: ConsolidatedRouteConfig,
+):
+    stops = [first_stop]
+    loads = [first_load]
+    load = first_load
+    distance = 0.0
+    hours = 0.0
+    current = origin
+
+    leg = _travel(lookup, current, first_stop)
+    if leg is None:
+        return None
+    distance += leg["distance_km"]
+    hours += leg["travel_time_hours"]
+
+    while len(stops) < config.max_stops:
+        candidates = []
+        for idx, chunk in enumerate(chunks):
+            destination, quantity = chunk
+            if quantity + load > config.parcel_capacity + 1e-9:
+                continue
+            leg = _travel(lookup, current, destination)
+            if leg is None:
+                continue
+            new_hours = hours + leg["travel_time_hours"]
+            if new_hours > config.max_route_hours + 1e-9:
+                continue
+            candidates.append(
+                (
+                    leg["distance_km"],
+                    leg["travel_time_hours"],
+                    -quantity,
+                    idx,
+                    destination,
+                    quantity,
+                )
+            )
+
+        if not candidates:
+            break
+
+        _, _, _, idx, destination, quantity = min(candidates)
+        chunks.pop(idx)
+        stops.append(destination)
+        loads.append(quantity)
+        load += quantity
+        leg = _travel(lookup, current, destination)
+        distance += leg["distance_km"]
+        hours += leg["travel_time_hours"]
+        current = destination
+
+    return {
+        "origin_hub": origin,
+        "destination_hubs": stops,
+        "stop_parcels": loads,
+        "parcels": load,
+        "stops": len(stops),
+        "distance_km": distance,
+        "travel_time_hours": hours,
+        "transport_cost": config.fixed_trip_cost + config.cost_per_km * distance,
+        "capacity_utilization": load / float(config.parcel_capacity),
+        "vehicle_type": config.vehicle_type,
+    }
+
+
+def build_consolidated_routes(
+    demand: pd.DataFrame,
+    hubs: pd.DataFrame,
+    cost: pd.DataFrame,
+    config: ConsolidatedRouteConfig | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Build capacitated multi-stop linehaul routes from forecast hub-to-hub demand.
+
+    The planner keeps the existing Olist hub network and real road-network
+    distance/time matrix. For each origin hub it repeatedly starts a route with
+    the largest remaining destination chunk, then adds the nearest feasible
+    destination chunks while respecting vehicle capacity, route time, and
+    stop limits.
+
+    This is a deterministic consolidation heuristic, not a claim of global
+    VRP optimality. It is intentionally separate from the existing network-flow
+    optimizer so the portfolio can compare direct OD dispatches with physical
+    multi-stop routes.
+    """
+    config = config or ConsolidatedRouteConfig()
+    if config.parcel_capacity <= 0 or config.max_stops <= 0 or config.max_route_hours <= 0:
+        raise ValueError("Route capacity, stop limit, and route hours must be positive")
+
+    required = {"origin_hub", "destination_hub", "parcel_count"}
+    missing = required - set(demand.columns)
+    if missing:
+        raise ValueError(f"Demand missing columns: {sorted(missing)}")
+
+    d = demand.copy()
+    d["parcel_count"] = pd.to_numeric(d["parcel_count"], errors="coerce").fillna(0).clip(lower=0)
+    d = (
+        d.groupby(["origin_hub", "destination_hub"], as_index=False)["parcel_count"]
+        .sum()
+    )
+    lookup = _route_lookup(cost)
+
+    routes = []
+    unmet = []
+    direct_cost = 0.0
+    total_requested = float(d["parcel_count"].sum())
+
+    for origin, group in d.groupby("origin_hub", sort=False):
+        chunks = []
+        for row in group.itertuples(index=False):
+            destination = row.destination_hub
+            quantity = float(row.parcel_count)
+            if quantity <= 0:
+                continue
+            if origin == destination:
+                # Same-hub demand is local handling, not a linehaul trip.
+                continue
+            if (origin, destination) not in lookup:
+                unmet.append(
+                    {
+                        "origin_hub": origin,
+                        "destination_hub": destination,
+                        "unmet_parcels": quantity,
+                        "reason": "missing_road_route",
+                    }
+                )
+                continue
+
+            leg = lookup[(origin, destination)]
+            direct_trips = math.ceil(quantity / config.parcel_capacity)
+            direct_cost += direct_trips * (
+                config.fixed_trip_cost + config.cost_per_km * leg["distance_km"]
+            )
+
+            if leg["travel_time_hours"] > config.max_route_hours:
+                unmet.append(
+                    {
+                        "origin_hub": origin,
+                        "destination_hub": destination,
+                        "unmet_parcels": quantity,
+                        "reason": "route_exceeds_max_hours",
+                    }
+                )
+                continue
+
+            for chunk in _chunks(quantity, config.parcel_capacity):
+                chunks.append((destination, chunk))
+
+        while chunks:
+            # Largest demand first creates useful consolidation anchors.
+            chunks.sort(key=lambda x: (-x[1], str(x[0])))
+            first_destination, first_quantity = chunks.pop(0)
+            route = _build_route(
+                origin,
+                first_destination,
+                first_quantity,
+                chunks,
+                lookup,
+                config,
+            )
+            if route is None:
+                unmet.append(
+                    {
+                        "origin_hub": origin,
+                        "destination_hub": first_destination,
+                        "unmet_parcels": first_quantity,
+                        "reason": "no_feasible_road_leg",
+                    }
+                )
+                continue
+            routes.append(route)
+
+    route_rows = []
+    for route_id, route in enumerate(routes, start=1):
+        route_rows.append(
+            {
+                "route_id": route_id,
+                "origin_hub": route["origin_hub"],
+                "destination_hubs": route["destination_hubs"],
+                "stop_parcels": route["stop_parcels"],
+                "parcels": route["parcels"],
+                "stops": route["stops"],
+                "distance_km": route["distance_km"],
+                "travel_time_hours": route["travel_time_hours"],
+                "transport_cost": route["transport_cost"],
+                "capacity_utilization": route["capacity_utilization"],
+                "vehicle_type": route["vehicle_type"],
+                "status": "consolidated_route",
+            }
+        )
+
+    out = pd.DataFrame(route_rows)
+    unmet_df = pd.DataFrame(unmet)
+
+    local_served = float(
+        d.loc[d["origin_hub"] == d["destination_hub"], "parcel_count"].sum()
+    )
+    served = float(out["parcels"].sum()) if not out.empty else 0.0
+    unmet_total = float(unmet_df["unmet_parcels"].sum()) if not unmet_df.empty else 0.0
+    route_cost = float(out["transport_cost"].sum()) if not out.empty else 0.0
+    route_count = len(out)
+    avg_utilization = (
+        float(out["capacity_utilization"].mean()) if not out.empty else 0.0
+    )
+
+    metrics = {
+        "status": "ok",
+        "total_requested_parcels": total_requested,
+        "served_parcels": served + local_served,
+        "unmet_parcels": unmet_total,
+        "service_level": (served + local_served) / max(total_requested, 1.0),
+        "consolidated_routes": route_count,
+        "average_stops": float(out["stops"].mean()) if not out.empty else 0.0,
+        "average_capacity_utilization": avg_utilization,
+        "total_transport_cost": route_cost,
+        "direct_dispatch_cost": direct_cost,
+        "estimated_cost_savings": direct_cost - route_cost,
+        "estimated_cost_savings_pct": (
+            100.0 * (direct_cost - route_cost) / direct_cost
+            if direct_cost > 0
+            else 0.0
+        ),
+        "local_parcels_assumed_served": local_served,
+    }
+
+    if not unmet_df.empty:
+        metrics["unmet_reasons"] = unmet_df.groupby("reason")["unmet_parcels"].sum().to_dict()
+    else:
+        metrics["unmet_reasons"] = {}
+
+    return out, metrics
