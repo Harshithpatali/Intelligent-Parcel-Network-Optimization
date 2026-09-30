@@ -229,3 +229,37 @@ def test_consolidated_routing_marks_infeasible_routes_unmet():
 
     assert metrics["unmet_parcels"] == pytest.approx(5.0)
     assert metrics["service_level"] == pytest.approx(0.0)
+
+
+
+def test_consolidated_routing_respects_fleet_hours():
+    from src.optimization.consolidated_routing import (
+        ConsolidatedRouteConfig,
+        build_consolidated_routes,
+    )
+
+    demand = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "parcel_count": 40},
+        {"origin_hub": 1, "destination_hub": 3, "parcel_count": 40},
+    ])
+    hubs = pd.DataFrame([
+        {"hub_id": 1, "lat": 0.0, "lng": 0.0},
+        {"hub_id": 2, "lat": 1.0, "lng": 1.0},
+        {"hub_id": 3, "lat": 2.0, "lng": 2.0},
+    ])
+    cost = pd.DataFrame([
+        {"origin_hub": 1, "destination_hub": 2, "distance_km": 100.0, "travel_time_hours": 8.0},
+        {"origin_hub": 1, "destination_hub": 3, "distance_km": 100.0, "travel_time_hours": 8.0},
+    ])
+    cfg = ConsolidatedRouteConfig(
+        parcel_capacity=40,
+        max_route_hours=8,
+        max_stops=3,
+        vehicle_count=1,
+        operating_hours_per_day=8,
+    )
+
+    _, metrics = build_consolidated_routes(demand, hubs, cost, cfg)
+
+    assert metrics["fleet_hours_used"] == pytest.approx(8.0)
+    assert metrics["unmet_parcels"] == pytest.approx(40.0)
